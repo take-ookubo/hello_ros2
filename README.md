@@ -24,6 +24,8 @@ hello_ros2/
 │   ├── entrypoint.sh           # ROS 2 とワークスペースの環境読み込み
 │   └── supervisord.conf        # 仮想画面、ウィンドウ管理、noVNC
 └── src/
+    ├── hello_py/               # Python の talker と listener
+    ├── hello_gazebo/           # Gazebo で箱を落とすサンプル
     └── simple_arm.urdf         # 既存のアームモデル
 ```
 
@@ -83,11 +85,41 @@ docker compose exec ros2-dev bash -ic 'ros2 run turtlesim turtlesim_node'
 docker compose exec ros2-dev bash -ic 'ros2 launch urdf_tutorial display.launch.py model:=/workspace/src/simple_arm.urdf'
 ```
 
+## サンプルパッケージ
+
+`src` には次の2つのサンプルがあります。コンテナ内でまとめてビルドします。
+
+```bash
+cd /workspace && colcon build --symlink-install && source install/setup.bash
+```
+
+### hello_py: Python の talker と listener
+
+`chatter` トピックで文字列を1秒ごとに送受信する、最小の Python ノードです。
+2つのターミナルで実行します。
+
+```bash
+ros2 run hello_py talker
+ros2 run hello_py listener
+```
+
+### hello_gazebo: Gazebo で箱を落とす
+
+Gazebo Fortress で高さ 3 m から箱を落とし、その高さを ROS 2 のノードが表示します。
+Gazebo の位置情報は `ros_gz_bridge` で `/model/box/odometry` トピックに変換します。
+
+```bash
+ros2 launch hello_gazebo hello_gazebo.launch.py
+```
+
+ブラウザの画面に Gazebo が開きます。起動直後は一時停止しているので、
+左下の再生ボタンを押すと箱が落ち、ターミナルに `Box height` が表示されます。
+ソフトウェア描画のため、画面が出るまで 30 秒ほどかかる場合があります。
+画面なしで実行する場合は `headless:=true` を付けます。この場合はすぐに落下が始まります。
+
 ## ROS 2 パッケージの開発
 
-現在の `src/simple_arm.urdf` は単体のモデルファイルなので、`colcon build` の対象になる
-ROS 2 パッケージはまだありません。必要なパッケージを `src` の下に作成します。
-コンテナ内のターミナルで実行する例:
+新しいパッケージは `src` の下に作成します。コンテナ内のターミナルで実行する例:
 
 ```bash
 cd /workspace/src

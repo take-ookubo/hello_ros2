@@ -103,6 +103,12 @@ RUN source /opt/ros/humble/setup.bash \
     && ros2 pkg prefix tesseract_rosutils \
     && test -d /tesseract_ws/install
 
+# Gazebo Fortress and the ROS 2 bridge for the hello_gazebo example.
+# Installed after the Tesseract build so its cached layers are reused.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ros-humble-ros-gz \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN printf '%s\n' \
     'source /opt/ros/humble/setup.bash' \
     '[ ! -f /tesseract_ws/install/setup.bash ] || source /tesseract_ws/install/setup.bash' \
