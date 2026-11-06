@@ -1,0 +1,8 @@
+.git
+.DS_Store
+.env
+build
+install
+log
+src
+README.md

@@ -1,0 +1,39 @@
+# Corrected 0.35 dependency versions from the upstream manifest:
+# https://github.com/tesseract-robotics/tesseract_ros2/blob/568b3761b05ddfdf42eb16aa2b9a0cf08abe663d/dependencies.repos
+repositories:
+  ros_industrial_cmake_boilerplate:
+    type: git
+    url: https://github.com/ros-industrial/ros_industrial_cmake_boilerplate.git
+    version: 0.7.4
+  boost_plugin_loader:
+    type: git
+    url: https://github.com/tesseract-robotics/boost_plugin_loader.git
+    version: 0.4.3
+  tesseract:
+    type: git
+    url: https://github.com/tesseract-robotics/tesseract.git
+    version: 0.35.0
+  trajopt:
+    type: git
+    url: https://github.com/tesseract-robotics/trajopt.git
+    version: 0.35.0
+  tesseract_planning:
+    type: git
+    url: https://github.com/tesseract-robotics/tesseract_planning.git
+    version: 0.35.0
+  tesseract_qt:
+    type: git
+    url: https://github.com/tesseract-robotics/tesseract_qt.git
+    version: 0.35.0
+  descartes_light:
+    type: git
+    url: https://github.com/swri-robotics/descartes_light.git
+    version: 0.4.11
+  opw_kinematics:
+    type: git
+    url: https://github.com/Jmeyer1292/opw_kinematics.git
+    version: 0.5.5
+  taskflow:
+    type: git
+    url: https://github.com/taskflow/taskflow.git
+    version: v3.5.0

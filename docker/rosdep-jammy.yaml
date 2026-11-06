@@ -1,0 +1,32 @@
+# Local overrides take priority over the default rosdep database.
+# Taskflow v3.5.0 is installed from source in the Dockerfile before rosdep runs.
+taskflow:
+  ubuntu:
+    jammy:
+      apt:
+        packages: []
+cereal:
+  ubuntu:
+    jammy:
+      apt:
+        packages: [libcereal-dev]
+osqp-eigen:
+  ubuntu:
+    jammy:
+      apt:
+        packages: []
+fcl:
+  ubuntu:
+    jammy: [libfcl-dev]
+gz-math7:
+  ubuntu:
+    jammy: [libgz-math7-dev]
+gz-common5:
+  ubuntu:
+    jammy: [libgz-common5-dev]
+gz-rendering7:
+  ubuntu:
+    jammy: [libgz-rendering7-dev]
+qt_advanced_docking:
+  ubuntu:
+    jammy: [qt-advanced-docking-system]

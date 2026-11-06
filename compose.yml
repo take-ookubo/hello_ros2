@@ -1,0 +1,40 @@
+name: hello-ros2
+
+services:
+  ros2-dev:
+    build:
+      context: .
+    # Desktop image for Intel Mac; Apple Silicon uses emulation.
+    platform: linux/amd64
+    init: true
+    tty: true
+    stdin_open: true
+    shm_size: "1gb"
+    environment:
+      DISPLAY: ":0"
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+      ROS_LOCALHOST_ONLY: "1"
+    ports:
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+    volumes:
+      - ./src:/workspace/src
+      - ros2-build:/workspace/build
+      - ros2-install:/workspace/install
+      - ros2-log:/workspace/log
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request, socket; urllib.request.urlopen('http://127.0.0.1:6080/vnc.html', timeout=3); socket.create_connection(('127.0.0.1', 5900), timeout=3).close()"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  ros2-build:
+  ros2-install:
+  ros2-log:
