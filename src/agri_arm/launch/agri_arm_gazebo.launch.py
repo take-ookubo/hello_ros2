@@ -20,9 +20,15 @@ def generate_launch_description():
         world = LaunchConfiguration('world').perform(context)
         gz_args = f'-r -s {world}' if headless else f'-r {world}'
         payload = str(float(LaunchConfiguration('payload').perform(context)))
+        mode = LaunchConfiguration('control_mode').perform(context)
+        if mode not in ('position', 'effort'):
+            raise ValueError(f'control_mode must be position or effort, not {mode}')
+        controllers = os.path.join(
+            share, 'config', 'controllers.yaml' if mode == 'position' else 'controllers_effort.yaml')
         robot_description = xacro.process_file(
             os.path.join(share, 'urdf', 'agri_arm.urdf.xacro'),
-            mappings={'payload': payload}).toxml()
+            mappings={'payload': payload, 'control_mode': mode,
+                      'controllers': controllers}).toxml()
         return [
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_sim_launch),
@@ -76,6 +82,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world', default_value=os.path.join(share, 'worlds', 'agri_world.sdf'),
             description='SDF world file to load'),
+        DeclareLaunchArgument(
+            'control_mode', default_value='position',
+            description='position (ideal servo) or effort (PID torque control)'),
         DeclareLaunchArgument(
             'payload', default_value='0.0',
             description='Extra mass [kg] at the tool tip, such as a fruit'),

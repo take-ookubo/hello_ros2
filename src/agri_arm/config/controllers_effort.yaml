@@ -1,0 +1,42 @@
+# Effort (torque) control: joint_trajectory_controller runs a PID per joint
+# and sends torque to Gazebo. Torque is clipped to the URDF effort limits
+# (u_clamp), so a too-fast trajectory shows up as tracking error.
+controller_manager:
+  ros__parameters:
+    update_rate: 1000  # Hz, same as the physics step
+    use_sim_time: true
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+arm_controller:
+  ros__parameters:
+    joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+    command_interfaces: [effort]
+    state_interfaces: [position, velocity]
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    # Start each new trajectory from the previous target, not the measured
+    # angle. Otherwise the small sag under gravity becomes a step in the
+    # target and causes a torque spike of about the gravity torque.
+    interpolate_from_desired_state: true
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 2.0
+    # First tuning by simulation. p and d scale with the moving inertia.
+    # joint1, joint4 and joint6 line up on one vertical axis when the arm is
+    # upright (home). The inertia about that axis is then only ~0.004 kg·m²
+    # (joint4: ~0.0001), and a larger d makes the 1 kHz loop unstable.
+    # Gazebo has no rotor (armature) inertia, which on the real geared
+    # motors would make these joints much heavier and allow higher gains.
+    gains:
+      joint1: {p: 200.0, i: 50.0, d: 1.5, i_clamp_max: 3.0, i_clamp_min: -3.0, u_clamp_max: 20.0, u_clamp_min: -20.0}
+      joint2: {p: 800.0, i: 800.0, d: 40.0, i_clamp_max: 20.0, i_clamp_min: -20.0, u_clamp_max: 43.0, u_clamp_min: -43.0}
+      joint3: {p: 400.0, i: 400.0, d: 15.0, i_clamp_max: 10.0, i_clamp_min: -10.0, u_clamp_max: 20.0, u_clamp_min: -20.0}
+      joint4: {p: 30.0, i: 40.0, d: 0.15, i_clamp_max: 1.0, i_clamp_min: -1.0, u_clamp_max: 6.0, u_clamp_min: -6.0}
+      joint5: {p: 60.0, i: 60.0, d: 1.5, i_clamp_max: 3.0, i_clamp_min: -3.0, u_clamp_max: 6.0, u_clamp_min: -6.0}
+      joint6: {p: 8.0, i: 20.0, d: 0.04, i_clamp_max: 0.5, i_clamp_min: -0.5, u_clamp_max: 2.5, u_clamp_min: -2.5}

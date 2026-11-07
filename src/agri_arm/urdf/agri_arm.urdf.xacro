@@ -7,6 +7,10 @@
 <robot name="agri_arm" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:arg name="controllers" default="$(find agri_arm)/config/controllers.yaml"/>
+  <!-- position: Gazebo moves each joint to the commanded angle (ideal servo).
+       effort: the controller's PID outputs joint torque, so acceleration
+       torques and torque saturation show up. Use controllers_effort.yaml. -->
+  <xacro:arg name="control_mode" default="position"/>
   <!-- Extra mass [kg] held at tool0, such as a fruit and cables. -->
   <xacro:arg name="payload" default="0.0"/>
 
@@ -232,14 +236,15 @@
     <xacro:color link="payload" rgb="0.85 0.1 0.1"/>
   </xacro:if>
 
-  <!-- ===== ros2_control: position commands, position/velocity/effort states ===== -->
+  <!-- ===== ros2_control: position or effort commands, position/velocity/effort states ===== -->
+  <xacro:property name="control_mode" value="$(arg control_mode)"/>
   <ros2_control name="AgriArmGazebo" type="system">
     <hardware>
       <plugin>gz_ros2_control/GazeboSimSystem</plugin>
     </hardware>
     <xacro:macro name="control_joint" params="name">
       <joint name="${name}">
-        <command_interface name="position"/>
+        <command_interface name="${control_mode}"/>
         <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>

@@ -66,6 +66,7 @@ def generate_launch_description():
             'world': os.path.join(share, 'worlds', 'harvest_world.sdf'),
             'headless': LaunchConfiguration('headless'),
             'payload': LaunchConfiguration('payload'),
+            'control_mode': LaunchConfiguration('control_mode'),
             'auto_move': 'false',
         }.items())
 
@@ -91,6 +92,8 @@ def generate_launch_description():
                               description='Run the harvest_demo motion sequence'),
         DeclareLaunchArgument('cycles', default_value='0',
                               description='Demo cycles, 0 repeats forever'),
+        DeclareLaunchArgument('control_mode', default_value='position',
+                              description='position (ideal servo) or effort (PID torque control)'),
         DeclareLaunchArgument('payload', default_value='0.0',
                               description='Extra mass [kg] at the tool tip'),
         gazebo,

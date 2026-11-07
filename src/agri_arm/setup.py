@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'pose_cycle = agri_arm.pose_cycle:main',
+            'dynamics_test = agri_arm.dynamics_test:main',
         ],
     },
 )
