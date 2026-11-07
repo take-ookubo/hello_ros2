@@ -34,6 +34,7 @@ hello_ros2/
     ├── hello_py/               # Python の talker と listener
     ├── hello_gazebo/           # Gazebo で箱を落とすサンプル
     ├── hello_arm/              # Gazebo で3関節アームと5本指ハンドを動かすサンプル
+    ├── agri_arm/               # 収穫用6軸アームのモデルと ros2_control（Jazzy 専用）
     └── simple_arm.urdf         # 既存のアームモデル
 ```
 
@@ -115,7 +116,7 @@ Gazebo は ROS のパッケージとして同梱されており、ROS の環境�
 
 ## サンプルパッケージ
 
-`src` には次の3つのサンプルがあります。`ros2-jazzy` のコンテナ内でまとめてビルドします。
+`src` には次のパッケージがあります。`ros2-jazzy` のコンテナ内でまとめてビルドします。
 Gazebo のサンプルは Harmonic 用の名前（`gz-sim-*`、`gz.msgs`）で書いています。
 Humble 環境の Gazebo Fortress 6.18 もこの名前を受け付け、箱とアームが動くことを確認済みです。
 
@@ -174,6 +175,50 @@ ros2 topic pub --once /hand/index_proximal/cmd_pos std_msgs/msg/Float64 "{data: 
 アームは Gazebo がワールドを読み込み終えてから生成されます。
 ソフトウェア描画のため、画面にアームが出るまで 30 秒ほどかかる場合があります。
 `headless:=true` を付けると画面なしで実行できます。
+
+### agri_arm: 収穫用6軸アームを ros2_control で動かす
+
+`docs/harvesting_robot_hardware_comparison.md` の暫定構成を元にした6軸アームです。
+Jazzy 環境専用です（gz_ros2_control を使うため）。
+
+| 関節 | 動き | 想定モジュール | URDF のトルク上限 |
+|---|---|---|---|
+| joint1 | 基部の旋回 | RMD-X6-P20-60 | 20 N·m（定格） |
+| joint2 | 肩 | RMD-X8-P20-120 | 43 N·m（定格） |
+| joint3 | 肘 | RMD-X6-P20-60 | 20 N·m（定格） |
+| joint4 | 前腕の回転 | XM540-W270 | 6 N·m（仮の基準。最大 10.6 N·m） |
+| joint5 | 手首の曲げ | XM540-W270 | 6 N·m（仮の基準） |
+| joint6 | 手先の回転 | XM430-W350 | 2.5 N·m（仮の基準。12 V での最大 4.1 N·m） |
+
+DYNAMIXEL の値は最大トルクより低く置いた仮の基準で、連続して出せるトルクの裏付けはありません。
+手首の割合は実機の余裕を示すものではないので、連続運転の試験で置き換えます。
+
+- 腕の長さは上腕 0.35 m、肘から手首 0.30 m、手首から手先 0.19 m です。
+  リンクの質量と長さは最初の見積もりで、CAD と実部品が決まったら更新します。
+- ハンド・カッター・カメラは、手先に付けた 0.65 kg の1つの塊として扱っています。
+  果実や配線の重さは `payload:=0.35` のように手先へ追加できます（既定は 0 kg）。
+- `joint_trajectory_controller` が `/arm_controller/follow_joint_trajectory` で軌道を受け取ります。
+  関節の状態は `joint_state_broadcaster` が `/joint_states` に出し、トルク（effort）も含みます。
+- `pose_cycle` が収穫を想定した姿勢を順に指令し、各姿勢で保持中のトルクと、
+  上の表のトルクに対する割合を表示します。
+
+```bash
+ros2 launch agri_arm agri_arm_gazebo.launch.py
+```
+
+`headless:=true` で画面なし、`auto_move:=false` で自動動作なしになります。
+
+検証記録（2026-11-08）：姿勢を保持中のトルクは、URDF の質量配置から手計算した静的トルクと
+全関節で 0.02 N·m 以内で一致しました。腕を水平に伸ばした最悪の姿勢では次のとおりです。
+手先の合計 1 kg は、資料にある「果実・配線込み約 1 kg」に相当します。
+
+| 条件 | 肩 | 肘 | 手首の曲げ |
+|---|---|---|---|
+| 手先 0.65 kg（荷重なし） | 12.5 N·m（定格の29%） | 4.2 N·m（21%） | 0.94 N·m（仮の基準の16%） |
+| 手先 1.0 kg（`payload:=0.35`） | 15.3 N·m（36%） | 5.9 N·m（29%） | 1.59 N·m（27%） |
+
+ただし、Gazebo の位置指令は関節を目標角度へほぼ理想的に追従させるため、
+加減速時のトルクやモータの応答遅れはまだ評価できていません。
 
 ## ROS 2 パッケージの開発
 
