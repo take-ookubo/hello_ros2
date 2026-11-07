@@ -34,7 +34,44 @@ services:
       start_period: 20s
       retries: 3
 
+  # ROS 2 Jazzy + Gazebo Harmonic. Uses its own build volumes and noVNC port.
+  ros2-jazzy:
+    build:
+      context: .
+      dockerfile: docker/jazzy/Dockerfile
+    platform: linux/amd64
+    init: true
+    tty: true
+    stdin_open: true
+    shm_size: "1gb"
+    environment:
+      DISPLAY: ":0"
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: "LOCALHOST"
+    ports:
+      - "127.0.0.1:${NOVNC_PORT_JAZZY:-6081}:6080"
+    volumes:
+      - ./src:/workspace/src
+      - jazzy-build:/workspace/build
+      - jazzy-install:/workspace/install
+      - jazzy-log:/workspace/log
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request, socket; urllib.request.urlopen('http://127.0.0.1:6080/vnc.html', timeout=3); socket.create_connection(('127.0.0.1', 5900), timeout=3).close()"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
 volumes:
   ros2-build:
   ros2-install:
   ros2-log:
+  jazzy-build:
+  jazzy-install:
+  jazzy-log:

@@ -47,14 +47,14 @@ def generate_launch_description():
 
     # ROS -> Gazebo: arm and finger joint targets. Gazebo -> ROS: joint states and clock.
     bridge_args = [
-        f'/arm/{j}/cmd_pos@std_msgs/msg/Float64]ignition.msgs.Double'
+        f'/arm/{j}/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double'
         for j in JOINTS
     ] + [
-        f'/hand/{j}/cmd_pos@std_msgs/msg/Float64]ignition.msgs.Double'
+        f'/hand/{j}/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double'
         for j in HAND_JOINTS
     ] + [
-        '/world/arm_world/model/hello_arm/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model',
-        '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
+        '/world/arm_world/model/hello_arm/joint_state@sensor_msgs/msg/JointState[gz.msgs.Model',
+        '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
     ]
     remappings = [('/world/arm_world/model/hello_arm/joint_state', '/joint_states')]
     bridge = Node(

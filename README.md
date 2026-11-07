@@ -1,6 +1,12 @@
 # hello_ros2 開発環境
 
-ROS 2 Humble の開発環境を Docker Compose で起動します。
+ROS 2 の開発環境を Docker Compose で起動します。環境は2つあります。
+
+- `ros2-jazzy`：ROS 2 Jazzy（Ubuntu 24.04）と Gazebo Harmonic。`src` のサンプルはこちらで動かします。
+  今後の開発もこちらで進めます。
+- `ros2-dev`：ROS 2 Humble（Ubuntu 22.04）と Tesseract のソースビルド。Tesseract はまだ Jazzy に移していません。
+
+以下の Tesseract の説明は `ros2-dev` についてです。
 既存の Tesseract のソースビルドを維持し、RViz・turtlesim・URDF の表示に使える
 ブラウザ経由のデスクトップ（noVNC）を追加しています。macOS では XQuartz は不要です。
 
@@ -18,9 +24,10 @@ ROS 2 Humble の開発環境を Docker Compose で起動します。
 
 ```text
 hello_ros2/
-├── Dockerfile                 # ROS 2 / Tesseract / GUI ツールの構築
+├── Dockerfile                 # Humble / Tesseract / GUI ツールの構築（ros2-dev）
 ├── compose.yml                # 開発コンテナ、ポート、保存領域
 ├── docker/
+│   ├── jazzy/Dockerfile        # Jazzy / Gazebo Harmonic / ros2_control の構築（ros2-jazzy）
 │   ├── entrypoint.sh           # ROS 2 とワークスペースの環境読み込み
 │   └── supervisord.conf        # 仮想画面、ウィンドウ管理、noVNC
 └── src/
@@ -86,9 +93,31 @@ docker compose exec ros2-dev bash -ic 'ros2 run turtlesim turtlesim_node'
 docker compose exec ros2-dev bash -ic 'ros2 launch urdf_tutorial display.launch.py model:=/workspace/src/simple_arm.urdf'
 ```
 
+## Jazzy + Gazebo Harmonic 環境
+
+```bash
+docker compose up -d --build ros2-jazzy
+docker compose exec ros2-jazzy bash
+```
+
+画面は <http://localhost:6081/vnc.html?autoconnect=true&resize=scale> で開きます。
+Humble 環境の 6080 とは別のポートで、ビルド成果物も別のボリュームに保存します。
+ポートは `.env` の `NOVNC_PORT_JAZZY` で変更できます。
+Gazebo は ROS のパッケージとして同梱されており、ROS の環境を読み込むと `gz sim` が使えます。
+次の段階で使う ros2_control と gz_ros2_control も入れてあります。
+
+検証記録（2026-11-07）：Gazebo Sim 8.15（Harmonic）で次を確認しました。
+
+- 箱の自由落下は理論値との差が最大 1.2 mm で、高さ 0.500 m で静止。
+- アームと5本指ハンドの自動動作。指の追従誤差は平均 0.011 rad。
+- 手動指令の保持。肩 0.8 rad の指令に対して 0.8004 rad。
+- 画面なしの実時間比は約 1.0、画面ありでは約 0.35〜0.55（ソフトウェア描画）。
+
 ## サンプルパッケージ
 
-`src` には次の3つのサンプルがあります。コンテナ内でまとめてビルドします。
+`src` には次の3つのサンプルがあります。`ros2-jazzy` のコンテナ内でまとめてビルドします。
+Gazebo のサンプルは Harmonic 用の名前（`gz-sim-*`、`gz.msgs`）で書いています。
+Humble 環境の Gazebo Fortress 6.18 もこの名前を受け付け、箱とアームが動くことを確認済みです。
 
 ```bash
 cd /workspace && colcon build --symlink-install && source install/setup.bash
@@ -106,7 +135,7 @@ ros2 run hello_py listener
 
 ### hello_gazebo: Gazebo で箱を落とす
 
-Gazebo Fortress で高さ 3 m から箱を落とし、その高さを ROS 2 のノードが表示します。
+Gazebo Harmonic で高さ 3 m から箱を落とし、その高さを ROS 2 のノードが表示します。
 Gazebo の位置情報は `ros_gz_bridge` で `/model/box/odometry` トピックに変換します。
 
 ```bash
@@ -156,19 +185,20 @@ ros2 pkg create --build-type ament_python hello_ros2_nodes
 cd /workspace
 rosdep update
 apt-get update
-rosdep install --from-paths src --ignore-src --rosdistro humble -y
+rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -y
 colcon build --symlink-install
 source /workspace/install/setup.bash
 ```
 
-新しい対話シェルでは ROS 2・Tesseract・開発ワークスペースの環境を自動で読み込みます。
+新しい対話シェルでは ROS 2・開発ワークスペース（Humble では Tesseract も）の環境を自動で読み込みます。
 既に開いているシェルにはビルド後に `source /workspace/install/setup.bash` が必要です。
 対話シェル以外で ROS コマンドを実行する場合は
 `docker compose exec ros2-dev /usr/local/bin/ros2-dev-entrypoint ros2 pkg list` のように
 エントリポイントを経由してください。
 
-ROS 通信は同じコンテナ内で完結する設定です。別のコンテナや実機と通信する場合は
-`ROS_LOCALHOST_ONLY` と Docker のネットワーク設定を調整する必要があります。
+ROS 通信は同じコンテナ内で完結する設定です。別のコンテナや実機と通信する場合は、
+Docker のネットワーク設定に加えて、Humble では `ROS_LOCALHOST_ONLY`、
+Jazzy では `ROS_AUTOMATIC_DISCOVERY_RANGE` を `compose.yml` で調整する必要があります。
 
 ## 管理
 

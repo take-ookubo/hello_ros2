@@ -33,7 +33,7 @@ def generate_launch_description():
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
-        arguments=['/model/box/odometry@nav_msgs/msg/Odometry[ignition.msgs.Odometry'],
+        arguments=['/model/box/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry'],
         output='screen',
     )
 

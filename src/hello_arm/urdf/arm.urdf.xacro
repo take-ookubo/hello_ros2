@@ -120,12 +120,12 @@
 
   <!-- Each joint follows a target angle [rad] published on /arm/<joint>/cmd_pos. -->
   <gazebo>
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>joint1</joint_name>
       <topic>/arm/joint1/cmd_pos</topic>
       <p_gain>40</p_gain><i_gain>0.5</i_gain><d_gain>4</d_gain>
     </plugin>
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>joint2</joint_name>
       <topic>/arm/joint2/cmd_pos</topic>
       <p_gain>80</p_gain><i_gain>20</i_gain><d_gain>6</d_gain>
@@ -133,14 +133,14 @@
            (about 7 Nm at a 0.8 rad shoulder angle). -->
       <i_max>10</i_max><i_min>-10</i_min>
     </plugin>
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>joint3</joint_name>
       <topic>/arm/joint3/cmd_pos</topic>
       <p_gain>40</p_gain><i_gain>10</i_gain><d_gain>3</d_gain>
       <i_max>4</i_max><i_min>-4</i_min>
     </plugin>
     <!-- Publishes all joint angles on /world/arm_world/model/hello_arm/joint_state. -->
-    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher"/>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
   </gazebo>
   <!-- ===== Five-finger hand ===== -->
   <!-- Each finger has a proximal and a distal joint that bend toward the palm
@@ -171,7 +171,7 @@
 
   <xacro:macro name="joint_controller" params="joint">
     <gazebo>
-      <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+      <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
         <joint_name>${joint}</joint_name>
         <topic>/hand/${joint}/cmd_pos</topic>
         <p_gain>1.0</p_gain><i_gain>0.1</i_gain><d_gain>0.01</d_gain>
