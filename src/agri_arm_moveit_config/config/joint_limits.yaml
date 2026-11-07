@@ -1,0 +1,12 @@
+# MoveIt time-parameterization limits. Velocities come from the URDF.
+# Accelerations are conservative first guesses until motor tests are done.
+default_velocity_scaling_factor: 0.5
+default_acceleration_scaling_factor: 0.5
+
+joint_limits:
+  joint1: {has_acceleration_limits: true, max_acceleration: 3.0}
+  joint2: {has_acceleration_limits: true, max_acceleration: 2.0}
+  joint3: {has_acceleration_limits: true, max_acceleration: 3.0}
+  joint4: {has_acceleration_limits: true, max_acceleration: 5.0}
+  joint5: {has_acceleration_limits: true, max_acceleration: 5.0}
+  joint6: {has_acceleration_limits: true, max_acceleration: 6.0}

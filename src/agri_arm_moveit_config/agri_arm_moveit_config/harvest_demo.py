@@ -1,0 +1,300 @@
+"""Plan collision-free harvesting moves with MoveIt 2 and run them in Gazebo.
+
+The sequence is home -> left fruit -> right fruit -> home. A support post
+stands between the two fruits, so a straight joint-space move from one fruit
+to the other would hit it. Each fruit pose is turned into joint values with
+collision-aware IK, seeded with an elbow-up posture so the solution is a
+natural one. OMPL then plans the joint-space move and the arm executes it.
+For every move the node logs the planning time, whether the straight move
+would have collided, whether the joint states measured during execution
+collided, and the tool position error after execution.
+"""
+import math
+import time
+
+import rclpy
+from geometry_msgs.msg import Pose, PoseStamped
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
+from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint,
+                             MotionPlanRequest, PlanningScene, RobotState)
+from moveit_msgs.srv import ApplyPlanningScene, GetPositionIK, GetStateValidity
+from rclpy.action import ActionClient
+from rclpy.duration import Duration
+from rclpy.node import Node
+from rclpy.time import Time
+from sensor_msgs.msg import JointState
+from shape_msgs.msg import SolidPrimitive
+from tf2_ros import Buffer, TransformListener
+
+GROUP = 'arm'
+TIP = 'tool0'
+FRAME = 'world'
+JOINTS = [f'joint{i}' for i in range(1, 7)]
+
+# Must match worlds/harvest_world.sdf.
+POST_CENTER = (0.42, 0.0, 0.45)
+POST_SIZE = (0.04, 0.04, 0.9)
+FRUITS = {'left': (0.42, 0.20, 0.45), 'right': (0.42, -0.20, 0.45)}
+STANDOFF = 0.04           # stop the tool this far in front of the fruit [m]
+# Tool z axis pointing along +x: rotate +90 degrees about y.
+APPROACH_QUAT = (0.0, math.sqrt(0.5), 0.0, math.sqrt(0.5))
+HOME = [0.0] * 6
+
+SUCCESS = 1
+
+
+def box(name, center, size):
+    obj = CollisionObject()
+    obj.header.frame_id = FRAME
+    obj.id = name
+    prim = SolidPrimitive(type=SolidPrimitive.BOX, dimensions=list(size))
+    pose = Pose()
+    pose.position.x, pose.position.y, pose.position.z = center
+    pose.orientation.w = 1.0
+    obj.primitives.append(prim)
+    obj.primitive_poses.append(pose)
+    obj.operation = CollisionObject.ADD
+    return obj
+
+
+class HarvestDemo(Node):
+    def __init__(self):
+        super().__init__('harvest_demo')
+        # false: only add the obstacles to the planning scene, then exit.
+        self.declare_parameter('run_motions', True)
+        self.declare_parameter('cycles', 0)
+        self.declare_parameter('planning_time', 5.0)
+        self.declare_parameter('velocity_scaling', 0.5)
+        self.move = ActionClient(self, MoveGroup, 'move_action')
+        self.execute = ActionClient(self, ExecuteTrajectory, 'execute_trajectory')
+        self.ik = self.create_client(GetPositionIK, 'compute_ik')
+        self.scene = self.create_client(ApplyPlanningScene, 'apply_planning_scene')
+        self.validity = self.create_client(GetStateValidity, 'check_state_validity')
+        self.tf = Buffer()
+        self.tf_listener = TransformListener(self.tf, self)
+        self.joint_state = None
+        self.recorded = None      # joint states captured during execution
+        self.create_subscription(JointState, 'joint_states', self.on_joints, 10)
+
+    def on_joints(self, msg):
+        self.joint_state = msg
+        if self.recorded is not None:
+            pos = dict(zip(msg.name, msg.position))
+            if all(n in pos for n in JOINTS):
+                self.recorded.append([pos[n] for n in JOINTS])
+
+    # ----- helpers -----
+    def wait(self, future, timeout=None):
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        return future.result()
+
+    def sleep(self, seconds):
+        end = self.get_clock().now() + Duration(seconds=seconds)
+        while rclpy.ok() and self.get_clock().now() < end:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def add_obstacles(self):
+        scene = PlanningScene(is_diff=True)
+        scene.world.collision_objects = [
+            box('post', POST_CENTER, POST_SIZE),
+            # Floor top 1 cm below the base so the pedestal is not in contact.
+            box('floor', (0.0, 0.0, -0.06), (2.0, 2.0, 0.1)),
+        ]
+        req = ApplyPlanningScene.Request(scene=scene)
+        ok = self.wait(self.scene.call_async(req), 10.0)
+        if not ok or not ok.success:
+            raise RuntimeError('could not add obstacles to the planning scene')
+
+    def solve_ik(self, xyz):
+        """Joint values that put tool0 at xyz facing +x, without collisions."""
+        x, y, z = xyz
+        # Elbow-up seed: upper arm near vertical, forearm reaching down to
+        # the wrist, base turned toward the wrist center behind the tool.
+        seed = [math.atan2(y, x - 0.19), 0.0, 1.9, 0.0, -0.4, 0.0]
+        req = GetPositionIK.Request()
+        ik = req.ik_request
+        ik.group_name = GROUP
+        ik.ik_link_name = TIP
+        ik.avoid_collisions = True
+        ik.timeout.nanosec = 200_000_000
+        ik.robot_state.joint_state.name = JOINTS
+        ik.robot_state.joint_state.position = seed
+        ps = PoseStamped()
+        ps.header.frame_id = FRAME
+        ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = xyz
+        (ps.pose.orientation.x, ps.pose.orientation.y,
+         ps.pose.orientation.z, ps.pose.orientation.w) = APPROACH_QUAT
+        ik.pose_stamped = ps
+        res = self.wait(self.ik.call_async(req), 5.0)
+        if res is None or res.error_code.val != SUCCESS:
+            return None
+        pos = dict(zip(res.solution.joint_state.name, res.solution.joint_state.position))
+        return [pos[n] for n in JOINTS]
+
+    def joint_goal(self, values):
+        return Constraints(joint_constraints=[
+            JointConstraint(joint_name=n, position=v, tolerance_above=0.002,
+                            tolerance_below=0.002, weight=1.0)
+            for n, v in zip(JOINTS, values)])
+
+    def plan(self, goal):
+        """Plan only. Returns (result, wall-clock seconds)."""
+        req = MotionPlanRequest()
+        req.group_name = GROUP
+        req.pipeline_id = 'ompl'
+        req.num_planning_attempts = 5
+        req.allowed_planning_time = self.get_parameter('planning_time').value
+        scale = self.get_parameter('velocity_scaling').value
+        req.max_velocity_scaling_factor = scale
+        req.max_acceleration_scaling_factor = scale
+        req.start_state.is_diff = True
+        req.goal_constraints = [goal]
+        action = MoveGroup.Goal(request=req)
+        action.planning_options.plan_only = True
+        action.planning_options.planning_scene_diff.is_diff = True
+        action.planning_options.planning_scene_diff.robot_state.is_diff = True
+        t0 = time.monotonic()
+        handle = self.wait(self.move.send_goal_async(action))
+        if not handle.accepted:
+            return None, 0.0
+        result = self.wait(handle.get_result_async()).result
+        return result, time.monotonic() - t0
+
+    def run_trajectory(self, trajectory):
+        self.recorded = []
+        handle = self.wait(self.execute.send_goal_async(
+            ExecuteTrajectory.Goal(trajectory=trajectory)))
+        if not handle.accepted:
+            return False
+        return self.wait(handle.get_result_async()).result.error_code.val == SUCCESS
+
+    def count_collisions(self, states):
+        """Return (colliding, unchecked) counts for the given joint states."""
+        bad = unchecked = 0
+        for q in states:
+            state = RobotState()
+            state.joint_state.name = JOINTS
+            state.joint_state.position = list(q)
+            req = GetStateValidity.Request(robot_state=state, group_name=GROUP)
+            res = self.wait(self.validity.call_async(req), 5.0)
+            if res is None:
+                unchecked += 1
+            elif not res.valid:
+                bad += 1
+        return bad, unchecked
+
+    def straight_move_collides(self, start, end, samples=40):
+        """Collision counts on a straight joint-space line."""
+        line = [[a + (b - a) * k / samples for a, b in zip(start, end)]
+                for k in range(samples + 1)]
+        return self.count_collisions(line)
+
+    @staticmethod
+    def fmt(counts, total):
+        bad, unchecked = counts
+        text = f'{bad}/{total} samples'
+        if unchecked:
+            text += f' ({unchecked} NOT CHECKED: validity service timed out)'
+        return text
+
+    def tip_error_mm(self, xyz):
+        self.sleep(0.5)
+        try:
+            t = self.tf.lookup_transform(FRAME, TIP, Time()).transform.translation
+        except Exception as exc:  # noqa: BLE001 - tf raises several types
+            self.get_logger().warn(f'tf lookup failed: {exc}')
+            return None
+        return 1000 * math.dist((t.x, t.y, t.z), xyz)
+
+    def current_joints(self):
+        js = self.joint_state
+        if js is None:
+            return None
+        pos = dict(zip(js.name, js.position))
+        return [pos.get(n, 0.0) for n in JOINTS]
+
+    # ----- main sequence -----
+    def step(self, cycle, name, joints, target_xyz=None):
+        # The controller can still be starting on the first move, so retry.
+        for _ in range(30):
+            start = self.current_joints()
+            result, wall = self.plan(self.joint_goal(joints))
+            if result is not None and result.error_code.val == SUCCESS:
+                if self.run_trajectory(result.planned_trajectory):
+                    break
+                self.get_logger().warn(f'{name}: execution failed, retrying')
+            else:
+                code = None if result is None else result.error_code.val
+                self.get_logger().warn(f'{name}: planning failed (code {code}), retrying')
+            self.sleep(1.0)
+        else:
+            self.get_logger().error(f'{name}: giving up')
+            return False
+        executed = self.recorded[::5]     # joint_states arrive at 200 Hz
+        self.recorded = None
+        points = result.planned_trajectory.joint_trajectory.points
+        duration = points[-1].time_from_start
+        hits = self.straight_move_collides(start, joints)
+        exec_hits = self.count_collisions(executed)
+        line = (f'[{cycle}] {name}: planned in {wall:.2f} s, {len(points)} points, '
+                f'motion {duration.sec + duration.nanosec * 1e-9:.2f} s, '
+                f'straight joint move collides at {self.fmt(hits, 41)}, '
+                f'executed path collides at {self.fmt(exec_hits, len(executed))}')
+        if target_xyz is not None:
+            err = self.tip_error_mm(target_xyz)
+            if err is not None:
+                line += f', tool error {err:.1f} mm'
+        self.get_logger().info(line)
+        return True
+
+    def run(self):
+        self.get_logger().info('waiting for move_group')
+        self.scene.wait_for_service()
+        self.add_obstacles()
+        if not self.get_parameter('run_motions').value:
+            self.get_logger().info('obstacles added; motions disabled')
+            return
+        self.move.wait_for_server()
+        self.execute.wait_for_server()
+        self.ik.wait_for_service()
+        self.validity.wait_for_service()
+        while rclpy.ok() and self.joint_state is None:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        targets = {}
+        for side, (x, y, z) in FRUITS.items():
+            xyz = (x - STANDOFF, y, z)
+            joints = self.solve_ik(xyz)
+            if joints is None:
+                self.get_logger().error(f'no IK solution for fruit_{side} at {xyz}')
+                return
+            self.get_logger().info(
+                f'fruit_{side} IK: ' + ' '.join(f'{v:+.2f}' for v in joints))
+            targets[side] = (xyz, joints)
+        cycles = self.get_parameter('cycles').value
+        cycle = 0
+        while rclpy.ok() and (cycles <= 0 or cycle < cycles):
+            cycle += 1
+            for side, (xyz, joints) in targets.items():
+                if not self.step(cycle, f'fruit_{side}', joints, xyz):
+                    return
+                self.sleep(1.0)
+            if not self.step(cycle, 'home', HOME):
+                return
+            self.sleep(1.0)
+        self.get_logger().info('done')
+
+
+def main():
+    rclpy.init()
+    node = HarvestDemo()
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == '__main__':
+    main()

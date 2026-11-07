@@ -27,7 +27,7 @@ hello_ros2/
 ├── Dockerfile                 # Humble / Tesseract / GUI ツールの構築（ros2-dev）
 ├── compose.yml                # 開発コンテナ、ポート、保存領域
 ├── docker/
-│   ├── jazzy/Dockerfile        # Jazzy / Gazebo Harmonic / ros2_control の構築（ros2-jazzy）
+│   ├── jazzy/Dockerfile        # Jazzy / Gazebo Harmonic / ros2_control / MoveIt 2 の構築（ros2-jazzy）
 │   ├── entrypoint.sh           # ROS 2 とワークスペースの環境読み込み
 │   └── supervisord.conf        # 仮想画面、ウィンドウ管理、noVNC
 └── src/
@@ -35,6 +35,7 @@ hello_ros2/
     ├── hello_gazebo/           # Gazebo で箱を落とすサンプル
     ├── hello_arm/              # Gazebo で3関節アームと5本指ハンドを動かすサンプル
     ├── agri_arm/               # 収穫用6軸アームのモデルと ros2_control（Jazzy 専用）
+    ├── agri_arm_moveit_config/ # agri_arm の MoveIt 2 設定と収穫の動作計画デモ（Jazzy 専用）
     └── simple_arm.urdf         # 既存のアームモデル
 ```
 
@@ -105,7 +106,7 @@ docker compose exec ros2-jazzy bash
 Humble 環境の 6080 とは別のポートで、ビルド成果物も別のボリュームに保存します。
 ポートは `.env` の `NOVNC_PORT_JAZZY` で変更できます。
 Gazebo は ROS のパッケージとして同梱されており、ROS の環境を読み込むと `gz sim` が使えます。
-次の段階で使う ros2_control と gz_ros2_control も入れてあります。
+ros2_control、gz_ros2_control、MoveIt 2 も入れてあります。
 
 検証記録（2026-11-07）：Gazebo Sim 8.15（Harmonic）で次を確認しました。
 
@@ -219,6 +220,47 @@ ros2 launch agri_arm agri_arm_gazebo.launch.py
 
 ただし、Gazebo の位置指令は関節を目標角度へほぼ理想的に追従させるため、
 加減速時のトルクやモータの応答遅れはまだ評価できていません。
+
+### agri_arm_moveit_config: MoveIt 2 で障害物を避けて果実へ向かう
+
+agri_arm に MoveIt 2 をつなぎ、支柱を避ける軌道を計画して Gazebo で実行します。
+Jazzy 環境専用です。
+
+```bash
+ros2 launch agri_arm_moveit_config harvest_moveit.launch.py
+```
+
+- Gazebo の世界 `worlds/harvest_world.sdf` には、太さ 4 cm・高さ 0.9 m の支柱と、
+  その左右 0.2 m の果実（見た目だけで当たり判定なし）を置いています。
+- `harvest_demo` は、同じ支柱と床を MoveIt の計画用シーンに入れ、
+  ホーム → 左の果実 → 右の果実 → ホームの順に動かします。手先は果実の 4 cm 手前で止めます。
+- 果実の位置と向き（手先を +x 方向へ向ける）から、当たり判定付きの逆運動学で関節角を求めます。
+  初期値に肘を上げた自然な姿勢を与え、肩を後ろへ振り切るような解を避けています。
+- その関節角へ向かう軌道を OMPL（RRTConnect）で計画し、`arm_controller` で実行します。
+- 各動作について、計画時間、関節角を直線的に補間した場合に支柱へ当たるか、
+  実行中に測った関節角が当たり判定に引っかかったか、手先の位置誤差を表示します。
+- RViz の MotionPlanning パネルから、目標姿勢をドラッグして手動で計画・実行もできます。
+  手動で使うときは `demo:=false` にします。このときも支柱と床は計画用シーンに登録されます。
+
+`headless:=true` で Gazebo の画面なし、`rviz:=false` で RViz なし、`cycles:=3` で3周して終了、
+`payload:=0.35` で手先に荷重を追加します。
+
+設定の要点：
+
+- `config/agri_arm.srdf` の当たり判定を省くリンクの組は、
+  `moveit_setup_assistant` の `collisions_updater` で 20000 回の無作為な姿勢から求めました。
+- `config/ompl_planning.yaml` で `longest_valid_segment_fraction` を 0.001 にしています。
+  既定の 0.005 では当たり判定の間隔が数 cm になり、細い支柱を見落とした軌道ができて、
+  最後の検証で弾かれて再計画になることがありました（8 動作中 1 回）。
+- `config/joint_limits.yaml` の加速度上限はモータ試験前の控えめな仮の値です。
+
+検証記録（2026-11-08）：画面なしで 5 周（15 動作）と、手先荷重 0.35 kg で 2 周を実行しました。
+
+- すべての動作で計画と実行に成功し、再試行は不要でした。計画時間は 0.04〜0.11 s です。
+- 左右の果実の間を関節角の直線補間で動くと、41 点中 11 点で支柱に当たります。
+  計画した軌道は支柱を回り込み、実行中の関節角でも当たりはありませんでした。
+- 果実手前の目標位置に対する手先の誤差は 0.3〜1.5 mm でした。
+- 画面ありでも Gazebo と RViz の両方で同じ動きを確認しました。
 
 ## ROS 2 パッケージの開発
 

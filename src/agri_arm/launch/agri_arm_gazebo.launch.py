@@ -12,12 +12,12 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     share = get_package_share_directory('agri_arm')
-    world = os.path.join(share, 'worlds', 'agri_world.sdf')
     gz_sim_launch = os.path.join(
         get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
 
     def gazebo_and_model(context):
         headless = IfCondition(LaunchConfiguration('headless')).evaluate(context)
+        world = LaunchConfiguration('world').perform(context)
         gz_args = f'-r -s {world}' if headless else f'-r {world}'
         payload = str(float(LaunchConfiguration('payload').perform(context)))
         robot_description = xacro.process_file(
@@ -73,6 +73,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'auto_move', default_value='true',
             description='Cycle through harvesting poses with pose_cycle'),
+        DeclareLaunchArgument(
+            'world', default_value=os.path.join(share, 'worlds', 'agri_world.sdf'),
+            description='SDF world file to load'),
         DeclareLaunchArgument(
             'payload', default_value='0.0',
             description='Extra mass [kg] at the tool tip, such as a fruit'),

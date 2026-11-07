@@ -1,0 +1,20 @@
+# Copied from moveit_configs_utils/default_configs/ompl_planning.yaml (Jazzy),
+# with group settings for agri_arm added at the end.
+planning_plugins:
+  - ompl_interface/OMPLPlanner
+# The order of the elements in the adapter corresponds to the order they are processed by the motion planning pipeline.
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+response_adapters:
+  - default_planning_response_adapters/AddTimeOptimalParameterization
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
+
+# agri_arm: check motions in finer steps. The default (0.005 of the joint
+# space extent) moves the tool tip a few centimeters between checks, which
+# can skip over a 4 cm post or stem.
+arm:
+  longest_valid_segment_fraction: 0.001

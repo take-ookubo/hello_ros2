@@ -16,10 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg xdotool mesa-utils feh \
     && rm -rf /var/lib/apt/lists/*
 
-# Gazebo Harmonic, the ROS 2 bridge, and ros2_control for the next stage.
+# Gazebo Harmonic, the ROS 2 bridge, ros2_control, and MoveIt 2.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ros-gz ros-jazzy-gz-ros2-control \
     ros-jazzy-ros2-control ros-jazzy-ros2-controllers \
+    ros-jazzy-moveit ros-jazzy-moveit-ros-perception \
     && rm -rf /var/lib/apt/lists/*
 
 RUN if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then rosdep init; fi \

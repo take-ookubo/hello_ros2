@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>agri_arm_moveit_config</name>
+  <version>0.0.1</version>
+  <description>MoveIt 2 configuration and harvesting demo for agri_arm</description>
+  <maintainer email="2122405+take-ookubo@users.noreply.github.com">take-ookubo</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>agri_arm</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>shape_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>moveit_configs_utils</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+  <exec_depend>moveit_kinematics</exec_depend>
+  <exec_depend>moveit_planners_ompl</exec_depend>
+  <exec_depend>pilz_industrial_motion_planner</exec_depend>
+  <exec_depend>moveit_simple_controller_manager</exec_depend>
+  <exec_depend>moveit_ros_visualization</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
