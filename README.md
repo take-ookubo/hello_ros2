@@ -146,9 +146,6 @@ ros2 topic pub --once /hand/index_proximal/cmd_pos std_msgs/msg/Float64 "{data: 
 ソフトウェア描画のため、画面にアームが出るまで 30 秒ほどかかる場合があります。
 `headless:=true` を付けると画面なしで実行できます。
 
-`videos/` に録画した動画があります。`box_fall.mp4` は箱の落下、`arm_motion.mp4` はハンドを付ける前のアーム、
-`arm_hand_motion.mp4` はハンド付きのアーム全体と、ハンドの開閉を拡大した映像です。
-
 ## ROS 2 パッケージの開発
 
 新しいパッケージは `src` の下に作成します。コンテナ内のターミナルで実行する例:
