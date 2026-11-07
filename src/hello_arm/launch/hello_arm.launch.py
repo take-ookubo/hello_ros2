@@ -7,15 +7,18 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+import xacro
 
 JOINTS = ['joint1', 'joint2', 'joint3']
+HAND_JOINTS = [f'{finger}_{part}'
+               for finger in ('thumb', 'index', 'middle', 'ring', 'little')
+               for part in ('proximal', 'distal')]
 
 
 def generate_launch_description():
     share = get_package_share_directory('hello_arm')
     world = os.path.join(share, 'worlds', 'arm_world.sdf')
-    with open(os.path.join(share, 'urdf', 'arm.urdf')) as f:
-        robot_description = f.read()
+    robot_description = xacro.process_file(os.path.join(share, 'urdf', 'arm.urdf.xacro')).toxml()
     gz_sim_launch = os.path.join(
         get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
 
@@ -42,10 +45,13 @@ def generate_launch_description():
         output='screen',
     )
 
-    # ROS -> Gazebo: joint targets. Gazebo -> ROS: joint states and clock.
+    # ROS -> Gazebo: arm and finger joint targets. Gazebo -> ROS: joint states and clock.
     bridge_args = [
         f'/arm/{j}/cmd_pos@std_msgs/msg/Float64]ignition.msgs.Double'
         for j in JOINTS
+    ] + [
+        f'/hand/{j}/cmd_pos@std_msgs/msg/Float64]ignition.msgs.Double'
+        for j in HAND_JOINTS
     ] + [
         '/world/arm_world/model/hello_arm/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model',
         '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
@@ -66,6 +72,13 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(LaunchConfiguration('auto_move')),
     )
+    hand_mover = Node(
+        package='hello_arm',
+        executable='hand_mover',
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('auto_move')),
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -73,10 +86,11 @@ def generate_launch_description():
             description='Run Gazebo without the GUI'),
         DeclareLaunchArgument(
             'auto_move', default_value='true',
-            description='Swing the joints automatically with arm_mover'),
+            description='Move the arm and hand automatically with arm_mover and hand_mover'),
         OpaqueFunction(function=gazebo),
         robot_state_publisher,
         spawn,
         bridge,
         mover,
+        hand_mover,
     ])

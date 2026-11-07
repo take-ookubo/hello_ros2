@@ -13,17 +13,18 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
-        ('share/' + package_name + '/urdf', glob('urdf/*.urdf')),
+        ('share/' + package_name + '/urdf', glob('urdf/*.xacro')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='take-ookubo',
     maintainer_email='2122405+take-ookubo@users.noreply.github.com',
-    description='Minimal Gazebo example: move a three-joint arm from ROS 2',
+    description='Minimal Gazebo example: move a three-joint arm with a five-finger hand from ROS 2',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'arm_mover = hello_arm.arm_mover:main',
+            'hand_mover = hello_arm.hand_mover:main',
         ],
     },
 )

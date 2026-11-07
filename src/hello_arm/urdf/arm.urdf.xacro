@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
-<!-- Three-joint arm based on simple_arm.urdf, with inertia and Gazebo plugins. -->
-<robot name="hello_arm">
+<!-- Three-joint arm based on simple_arm.urdf with a five-finger hand.
+     Process with xacro to get a plain URDF. -->
+<robot name="hello_arm" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <!-- Fix the arm base to the world. -->
   <link name="world"/>
@@ -92,10 +93,6 @@
       <origin xyz="0 0 0.2"/>
       <geometry><box size="0.06 0.06 0.4"/></geometry>
     </visual>
-    <visual name="tip">
-      <origin xyz="0 0 0.42"/>
-      <geometry><sphere radius="0.04"/></geometry>
-    </visual>
     <collision>
       <origin xyz="0 0 0.2"/>
       <geometry><box size="0.06 0.06 0.4"/></geometry>
@@ -132,16 +129,111 @@
       <joint_name>joint2</joint_name>
       <topic>/arm/joint2/cmd_pos</topic>
       <p_gain>80</p_gain><i_gain>20</i_gain><d_gain>6</d_gain>
-      <!-- Allow enough integral torque to hold the arm against gravity. -->
-      <i_max>5</i_max><i_min>-5</i_min>
+      <!-- Allow enough integral torque to hold the arm and hand against gravity
+           (about 7 Nm at a 0.8 rad shoulder angle). -->
+      <i_max>10</i_max><i_min>-10</i_min>
     </plugin>
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>joint3</joint_name>
       <topic>/arm/joint3/cmd_pos</topic>
       <p_gain>40</p_gain><i_gain>10</i_gain><d_gain>3</d_gain>
-      <i_max>2</i_max><i_min>-2</i_min>
+      <i_max>4</i_max><i_min>-4</i_min>
     </plugin>
     <!-- Publishes all joint angles on /world/arm_world/model/hello_arm/joint_state. -->
     <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher"/>
   </gazebo>
+  <!-- ===== Five-finger hand ===== -->
+  <!-- Each finger has a proximal and a distal joint that bend toward the palm
+       front (+x). Each joint follows /hand/<joint>/cmd_pos [rad]. -->
+
+  <xacro:property name="finger_width" value="0.016"/>
+  <!-- Very light links make the PID controllers unstable at a 1 ms step, so
+       the inertia about the bending axes has a lower bound. It can still be
+       realized by putting more of the mass near the segment ends. The inertia
+       about the long axis (z) is the uniform-box value. -->
+  <xacro:property name="min_inertia" value="1e-5"/>
+
+  <xacro:macro name="box_inertial" params="mass x y z">
+    <inertial>
+      <origin xyz="0 0 ${z / 2}"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${max(min_inertia, mass * (y * y + z * z) / 12)}" ixy="0" ixz="0"
+               iyy="${max(min_inertia, mass * (x * x + z * z) / 12)}" iyz="0"
+               izz="${mass * (x * x + y * y) / 12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="color" params="link rgb">
+    <gazebo reference="${link}">
+      <visual><material><ambient>${rgb} 1</ambient><diffuse>${rgb} 1</diffuse></material></visual>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="joint_controller" params="joint">
+    <gazebo>
+      <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+        <joint_name>${joint}</joint_name>
+        <topic>/hand/${joint}/cmd_pos</topic>
+        <p_gain>1.0</p_gain><i_gain>0.1</i_gain><d_gain>0.01</d_gain>
+        <i_max>0.05</i_max><i_min>-0.05</i_min>
+        <cmd_max>2</cmd_max><cmd_min>-2</cmd_min>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="finger_segment" params="name parent xyz rpy length">
+    <joint name="${name}" type="revolute">
+      <parent link="${parent}"/>
+      <child link="${name}_link"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="0" upper="1.57" effort="2.0" velocity="4.0"/>
+      <dynamics damping="0.01"/>
+    </joint>
+    <link name="${name}_link">
+      <visual>
+        <origin xyz="0 0 ${length / 2}"/>
+        <geometry><box size="${finger_width} ${finger_width} ${length}"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${length / 2}"/>
+        <geometry><box size="${finger_width} ${finger_width} ${length}"/></geometry>
+      </collision>
+      <xacro:box_inertial mass="0.05" x="${finger_width}" y="${finger_width}" z="${length}"/>
+    </link>
+    <xacro:joint_controller joint="${name}"/>
+  </xacro:macro>
+
+  <xacro:macro name="finger" params="name xyz rpy:='0 0 0' proximal distal">
+    <xacro:finger_segment name="${name}_proximal" parent="palm" xyz="${xyz}" rpy="${rpy}" length="${proximal}"/>
+    <xacro:finger_segment name="${name}_distal" parent="${name}_proximal_link" xyz="0 0 ${proximal}" rpy="0 0 0" length="${distal}"/>
+    <xacro:color link="${name}_proximal_link" rgb="0.9 0.75 0.6"/>
+    <xacro:color link="${name}_distal_link" rgb="0.8 0.6 0.45"/>
+  </xacro:macro>
+
+  <joint name="wrist" type="fixed">
+    <parent link="link3"/>
+    <child link="palm"/>
+    <origin xyz="0 0 0.4"/>
+  </joint>
+
+  <link name="palm">
+    <visual>
+      <origin xyz="0 0 0.05"/>
+      <geometry><box size="0.03 0.09 0.1"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.05"/>
+      <geometry><box size="0.03 0.09 0.1"/></geometry>
+    </collision>
+    <xacro:box_inertial mass="0.15" x="0.03" y="0.09" z="0.1"/>
+  </link>
+  <xacro:color link="palm" rgb="0.9 0.75 0.6"/>
+
+  <!-- The thumb sits on the side of the palm and points outward and up. -->
+  <xacro:finger name="thumb" xyz="0.01 0.045 0.03" rpy="-0.9 0 0" proximal="0.035" distal="0.03"/>
+  <xacro:finger name="index" xyz="0 0.03 0.1" proximal="0.045" distal="0.035"/>
+  <xacro:finger name="middle" xyz="0 0.01 0.1" proximal="0.05" distal="0.04"/>
+  <xacro:finger name="ring" xyz="0 -0.01 0.1" proximal="0.045" distal="0.035"/>
+  <xacro:finger name="little" xyz="0 -0.03 0.1" proximal="0.035" distal="0.03"/>
 </robot>

@@ -26,7 +26,7 @@ hello_ros2/
 └── src/
     ├── hello_py/               # Python の talker と listener
     ├── hello_gazebo/           # Gazebo で箱を落とすサンプル
-    ├── hello_arm/              # Gazebo で3関節アームを動かすサンプル
+    ├── hello_arm/              # Gazebo で3関節アームと5本指ハンドを動かすサンプル
     └── simple_arm.urdf         # 既存のアームモデル
 ```
 
@@ -118,10 +118,12 @@ ros2 launch hello_gazebo hello_gazebo.launch.py
 ソフトウェア描画のため、画面が出るまで 30 秒ほどかかる場合があります。
 画面なしで実行する場合は `headless:=true` を付けます。この場合はすぐに落下が始まります。
 
-### hello_arm: Gazebo で3関節アームを動かす
+### hello_arm: Gazebo で3関節アームと5本指ハンドを動かす
 
-`simple_arm.urdf` を元に、土台の旋回・肩・肘の3関節を持つアームを Gazebo に出し、
-ROS 2 のノードから各関節をサイン波で動かします。
+`simple_arm.urdf` を元に、土台の旋回・肩・肘の3関節を持つアームの先に5本指のハンドを付けて
+Gazebo に出します。`arm_mover` が各関節をサイン波で動かし、`hand_mover` が親指から順に
+指を曲げて握り、一斉に開く動作を8秒周期で繰り返します。
+モデルは `urdf/arm.urdf.xacro` で、各指は根元と先の2関節を持ち、同じマクロから作ります。
 
 ```bash
 ros2 launch hello_arm hello_arm.launch.py
@@ -129,19 +131,23 @@ ros2 launch hello_arm hello_arm.launch.py
 
 - 関節の目標角度は `/arm/joint1/cmd_pos` などのトピックに `std_msgs/Float64` [rad] で送ります。
   Gazebo の位置制御プラグインがその角度に追従させます。
-- 関節の現在角度は `/joint_states` に出ます。`arm_mover` が目標と実測を 0.5 秒ごとに表示します。
+- 指の目標角度は `/hand/<指>_<proximal|distal>/cmd_pos` に送ります。指は `thumb`・`index`・`middle`・
+  `ring`・`little` で、0 が伸ばした状態、正の値で手のひら側へ曲がります（上限 1.57 rad）。
+- 関節の現在角度は `/joint_states` に出ます。`arm_mover` と `hand_mover` が目標と実測を定期的に表示します。
 - 手動で動かす場合は `auto_move:=false` を付けて起動し、別のターミナルから目標角度を送ります。
 
 ```bash
 ros2 launch hello_arm hello_arm.launch.py auto_move:=false
 ros2 topic pub --once /arm/joint2/cmd_pos std_msgs/msg/Float64 "{data: 0.8}"
+ros2 topic pub --once /hand/index_proximal/cmd_pos std_msgs/msg/Float64 "{data: 1.2}"
 ```
 
 アームは Gazebo がワールドを読み込み終えてから生成されます。
 ソフトウェア描画のため、画面にアームが出るまで 30 秒ほどかかる場合があります。
 `headless:=true` を付けると画面なしで実行できます。
 
-`videos/` に、箱の落下とアームの動作を録画した動画があります。
+`videos/` に録画した動画があります。`box_fall.mp4` は箱の落下、`arm_motion.mp4` はハンドを付ける前のアーム、
+`arm_hand_motion.mp4` はハンド付きのアーム全体と、ハンドの開閉を拡大した映像です。
 
 ## ROS 2 パッケージの開発
 
