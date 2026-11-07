@@ -26,6 +26,7 @@ hello_ros2/
 └── src/
     ├── hello_py/               # Python の talker と listener
     ├── hello_gazebo/           # Gazebo で箱を落とすサンプル
+    ├── hello_arm/              # Gazebo で3関節アームを動かすサンプル
     └── simple_arm.urdf         # 既存のアームモデル
 ```
 
@@ -87,7 +88,7 @@ docker compose exec ros2-dev bash -ic 'ros2 launch urdf_tutorial display.launch.
 
 ## サンプルパッケージ
 
-`src` には次の2つのサンプルがあります。コンテナ内でまとめてビルドします。
+`src` には次の3つのサンプルがあります。コンテナ内でまとめてビルドします。
 
 ```bash
 cd /workspace && colcon build --symlink-install && source install/setup.bash
@@ -116,6 +117,31 @@ ros2 launch hello_gazebo hello_gazebo.launch.py
 左下の再生ボタンを押すと箱が落ち、ターミナルに `Box height` が表示されます。
 ソフトウェア描画のため、画面が出るまで 30 秒ほどかかる場合があります。
 画面なしで実行する場合は `headless:=true` を付けます。この場合はすぐに落下が始まります。
+
+### hello_arm: Gazebo で3関節アームを動かす
+
+`simple_arm.urdf` を元に、土台の旋回・肩・肘の3関節を持つアームを Gazebo に出し、
+ROS 2 のノードから各関節をサイン波で動かします。
+
+```bash
+ros2 launch hello_arm hello_arm.launch.py
+```
+
+- 関節の目標角度は `/arm/joint1/cmd_pos` などのトピックに `std_msgs/Float64` [rad] で送ります。
+  Gazebo の位置制御プラグインがその角度に追従させます。
+- 関節の現在角度は `/joint_states` に出ます。`arm_mover` が目標と実測を 0.5 秒ごとに表示します。
+- 手動で動かす場合は `auto_move:=false` を付けて起動し、別のターミナルから目標角度を送ります。
+
+```bash
+ros2 launch hello_arm hello_arm.launch.py auto_move:=false
+ros2 topic pub --once /arm/joint2/cmd_pos std_msgs/msg/Float64 "{data: 0.8}"
+```
+
+アームは Gazebo がワールドを読み込み終えてから生成されます。
+ソフトウェア描画のため、画面にアームが出るまで 30 秒ほどかかる場合があります。
+`headless:=true` を付けると画面なしで実行できます。
+
+`videos/` に、箱の落下とアームの動作を録画した動画があります。
 
 ## ROS 2 パッケージの開発
 
