@@ -80,6 +80,7 @@ def generate_launch_description():
             'run_motions': LaunchConfiguration('demo'),
             'cycles': LaunchConfiguration('cycles'),
             'use_camera': LaunchConfiguration('camera'),
+            'approach': LaunchConfiguration('approach'),
         }],
         output='screen',
     )
@@ -137,6 +138,9 @@ def generate_launch_description():
                               description='position (ideal servo) or effort (PID torque control)'),
         DeclareLaunchArgument('payload', default_value='0.0',
                               description='Extra mass [kg] at the tool tip'),
+        DeclareLaunchArgument('approach', default_value='lin',
+                              description='lin: straight Pilz LIN approach from 10 cm, '
+                              'joint: OMPL straight to the pick pose'),
         DeclareLaunchArgument('camera', default_value='true',
                               description='Find the fruit with the field camera '
                               '(false: use the fixed positions)'),

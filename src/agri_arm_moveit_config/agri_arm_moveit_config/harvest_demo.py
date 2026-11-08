@@ -7,10 +7,20 @@ agri_perception's fruit_detector, read again at home before every cycle,
 and their error from the true positions in the world file is logged.
 Each fruit pose is turned into joint values with
 collision-aware IK, seeded with an elbow-up posture so the solution is a
-natural one. OMPL then plans the joint-space move and the arm executes it.
-For every move the node logs the planning time, whether the straight move
-would have collided, whether the joint states measured during execution
-collided, and the tool position error after execution.
+natural one. The fruit themselves are added to the planning scene as
+spheres.
+
+With approach:=lin (default) OMPL brings the tool to a pre-approach pose
+PRE_APPROACH in front of the fruit; the Pilz LIN planner then moves the
+tool in a straight line to the pick pose and back out. With
+approach:=joint OMPL goes straight to the pick pose, as before.
+
+For every move the node logs the planning time, whether the joint
+states measured during execution collided, and the tool position error.
+Joint moves also report whether a straight joint-space move would have
+collided; LIN moves report how far the tool left the straight line, for
+the planned and the executed path, and how far a joint-space move between
+the same two poses would have strayed.
 """
 import math
 import time
@@ -18,9 +28,11 @@ import time
 import rclpy
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
-from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint,
-                             MotionPlanRequest, PlanningScene, RobotState)
-from moveit_msgs.srv import ApplyPlanningScene, GetPositionIK, GetStateValidity
+from moveit_msgs.msg import (BoundingVolume, CollisionObject, Constraints,
+                             JointConstraint, MotionPlanRequest, OrientationConstraint,
+                             PlanningScene, PositionConstraint, RobotState)
+from moveit_msgs.srv import (ApplyPlanningScene, GetPositionFK, GetPositionIK,
+                             GetStateValidity)
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -39,7 +51,9 @@ JOINTS = [f'joint{i}' for i in range(1, 7)]
 POST_CENTER = (0.42, 0.0, 0.45)
 POST_SIZE = (0.04, 0.04, 0.9)
 FRUITS = {'left': (0.42, 0.20, 0.45), 'right': (0.42, -0.20, 0.45)}
-STANDOFF = 0.04           # stop the tool this far in front of the fruit [m]
+FRUIT_RADIUS = 0.035
+STANDOFF = 0.04           # tool0 stops this far in front of the fruit center [m]
+PRE_APPROACH = 0.10       # LIN approach starts this far in front [m]
 # Tool z axis pointing along +x: rotate +90 degrees about y.
 APPROACH_QUAT = (0.0, math.sqrt(0.5), 0.0, math.sqrt(0.5))
 HOME = [0.0] * 6
@@ -48,10 +62,17 @@ SUCCESS = 1
 
 
 def box(name, center, size):
+    return shape(name, center, SolidPrimitive(type=SolidPrimitive.BOX, dimensions=list(size)))
+
+
+def sphere(name, center, radius):
+    return shape(name, center, SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[radius]))
+
+
+def shape(name, center, prim):
     obj = CollisionObject()
     obj.header.frame_id = FRAME
     obj.id = name
-    prim = SolidPrimitive(type=SolidPrimitive.BOX, dimensions=list(size))
     pose = Pose()
     pose.position.x, pose.position.y, pose.position.z = center
     pose.orientation.w = 1.0
@@ -72,9 +93,14 @@ class HarvestDemo(Node):
         self.declare_parameter('use_camera', False)
         self.declare_parameter('detection_topic', '/fruit_detector/ripe')
         self.declare_parameter('detection_timeout', 30.0)
+        self.declare_parameter('approach', 'lin')         # lin or joint
+        self.declare_parameter('approach_scaling', 0.2)   # Pilz LIN speed factor
+        if self.get_parameter('approach').value not in ('lin', 'joint'):
+            raise ValueError('approach must be lin or joint')
         self.move = ActionClient(self, MoveGroup, 'move_action')
         self.execute = ActionClient(self, ExecuteTrajectory, 'execute_trajectory')
         self.ik = self.create_client(GetPositionIK, 'compute_ik')
+        self.fk = self.create_client(GetPositionFK, 'compute_fk')
         self.scene = self.create_client(ApplyPlanningScene, 'apply_planning_scene')
         self.validity = self.create_client(GetStateValidity, 'check_state_validity')
         self.tf = Buffer()
@@ -83,6 +109,7 @@ class HarvestDemo(Node):
         self.recorded = None      # joint states captured during execution
         self.create_subscription(JointState, 'joint_states', self.on_joints, 10)
         self.detections = None
+        self.fruit_ids = []       # fruit spheres currently in the planning scene
         if self.get_parameter('use_camera').value:
             self.create_subscription(PoseArray, self.get_parameter('detection_topic').value,
                                      self.on_detections, 1)
@@ -114,10 +141,25 @@ class HarvestDemo(Node):
             # Floor top 1 cm below the base so the pedestal is not in contact.
             box('floor', (0.0, 0.0, -0.06), (2.0, 2.0, 0.1)),
         ]
+        self.apply(scene)
+
+    def apply(self, scene):
         req = ApplyPlanningScene.Request(scene=scene)
         ok = self.wait(self.scene.call_async(req), 10.0)
         if not ok or not ok.success:
-            raise RuntimeError('could not add obstacles to the planning scene')
+            raise RuntimeError('could not update the planning scene')
+
+    def set_fruits(self, fruits):
+        """Replace the fruit spheres in the planning scene."""
+        scene = PlanningScene(is_diff=True)
+        for fid in self.fruit_ids:
+            old = CollisionObject(id=fid, operation=CollisionObject.REMOVE)
+            old.header.frame_id = FRAME
+            scene.world.collision_objects.append(old)
+        self.fruit_ids = [name for name, _ in fruits]
+        scene.world.collision_objects += [sphere(name, xyz, FRUIT_RADIUS)
+                                          for name, xyz in fruits]
+        self.apply(scene)
 
     def solve_ik(self, xyz):
         """Joint values that put tool0 at xyz facing +x, without collisions."""
@@ -151,14 +193,38 @@ class HarvestDemo(Node):
                             tolerance_below=0.002, weight=1.0)
             for n, v in zip(JOINTS, values)])
 
-    def plan(self, goal):
-        """Plan only. Returns (result, wall-clock seconds)."""
+    def pose_goal(self, xyz):
+        """tool0 at xyz (within 1 mm) facing +x, for the Pilz LIN planner."""
+        region = BoundingVolume()
+        region.primitives.append(SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.001]))
+        center = Pose()
+        center.position.x, center.position.y, center.position.z = xyz
+        center.orientation.w = 1.0
+        region.primitive_poses.append(center)
+        pos = PositionConstraint(link_name=TIP, constraint_region=region, weight=1.0)
+        pos.header.frame_id = FRAME
+        ori = OrientationConstraint(link_name=TIP, weight=1.0, absolute_x_axis_tolerance=0.01,
+                                    absolute_y_axis_tolerance=0.01,
+                                    absolute_z_axis_tolerance=0.01)
+        ori.header.frame_id = FRAME
+        (ori.orientation.x, ori.orientation.y,
+         ori.orientation.z, ori.orientation.w) = APPROACH_QUAT
+        return Constraints(position_constraints=[pos], orientation_constraints=[ori])
+
+    def plan(self, goal, lin=False):
+        """Plan only, with OMPL or Pilz LIN. Returns (result, wall-clock seconds)."""
         req = MotionPlanRequest()
         req.group_name = GROUP
-        req.pipeline_id = 'ompl'
-        req.num_planning_attempts = 5
+        if lin:
+            req.pipeline_id = 'pilz_industrial_motion_planner'
+            req.planner_id = 'LIN'
+            req.num_planning_attempts = 1
+            scale = self.get_parameter('approach_scaling').value
+        else:
+            req.pipeline_id = 'ompl'
+            req.num_planning_attempts = 5
+            scale = self.get_parameter('velocity_scaling').value
         req.allowed_planning_time = self.get_parameter('planning_time').value
-        scale = self.get_parameter('velocity_scaling').value
         req.max_velocity_scaling_factor = scale
         req.max_acceleration_scaling_factor = scale
         req.start_state.is_diff = True
@@ -202,6 +268,34 @@ class HarvestDemo(Node):
         line = [[a + (b - a) * k / samples for a, b in zip(start, end)]
                 for k in range(samples + 1)]
         return self.count_collisions(line)
+
+    def tool_positions(self, states):
+        """tool0 positions in FRAME for the given joint states (compute_fk)."""
+        out = []
+        for q in states:
+            req = GetPositionFK.Request(fk_link_names=[TIP])
+            req.header.frame_id = FRAME
+            req.robot_state.joint_state.name = JOINTS
+            req.robot_state.joint_state.position = list(q)
+            res = self.wait(self.fk.call_async(req), 5.0)
+            if res is None or res.error_code.val != SUCCESS:
+                raise RuntimeError('compute_fk failed')
+            p = res.pose_stamped[0].pose.position
+            out.append((p.x, p.y, p.z))
+        return out
+
+    @staticmethod
+    def off_line_mm(points, a, b):
+        """Largest distance [mm] of points from the segment a-b."""
+        ab = [bi - ai for ai, bi in zip(a, b)]
+        n2 = sum(c * c for c in ab)
+        worst = 0.0
+        for p in points:
+            ap = [pi - ai for ai, pi in zip(a, p)]
+            t = min(1.0, max(0.0, sum(x * y for x, y in zip(ap, ab)) / n2))
+            closest = [ai + t * c for ai, c in zip(a, ab)]
+            worst = max(worst, math.dist(p, closest))
+        return 1000 * worst
 
     @staticmethod
     def fmt(counts, total):
@@ -255,11 +349,19 @@ class HarvestDemo(Node):
         return fruits
 
     # ----- main sequence -----
-    def step(self, cycle, name, joints, target_xyz=None):
+    def step(self, cycle, name, joints=None, target_xyz=None, line=None, final_approach=False):
+        """Plan and run one move: a joint goal (OMPL), or with line=(a, b) a
+        Pilz LIN move of tool0 from a to b.
+
+        final_approach: also report how far the tool strayed from the +x
+        approach axis through target_xyz during the last PRE_APPROACH -
+        STANDOFF of travel, to compare with the LIN approach.
+        """
+        goal = self.pose_goal(line[1]) if line else self.joint_goal(joints)
         # The controller can still be starting on the first move, so retry.
         for _ in range(30):
             start = self.current_joints()
-            result, wall = self.plan(self.joint_goal(joints))
+            result, wall = self.plan(goal, lin=line is not None)
             if result is not None and result.error_code.val == SUCCESS:
                 if self.run_trajectory(result.planned_trajectory):
                     break
@@ -275,17 +377,39 @@ class HarvestDemo(Node):
         self.recorded = None
         points = result.planned_trajectory.joint_trajectory.points
         duration = points[-1].time_from_start
-        hits = self.straight_move_collides(start, joints)
         exec_hits = self.count_collisions(executed)
-        line = (f'[{cycle}] {name}: planned in {wall:.2f} s, {len(points)} points, '
-                f'motion {duration.sec + duration.nanosec * 1e-9:.2f} s, '
-                f'straight joint move collides at {self.fmt(hits, 41)}, '
-                f'executed path collides at {self.fmt(exec_hits, len(executed))}')
+        text = (f'[{cycle}] {name}: planned in {wall:.2f} s, {len(points)} points, '
+                f'motion {duration.sec + duration.nanosec * 1e-9:.2f} s, ')
+        if line:
+            # LIN starts from where the arm actually stopped, which can be
+            # a little off the nominal start, so measure from there.
+            planned = self.tool_positions([pt.positions for pt in points])
+            a, b = planned[0], line[1]
+            measured = self.tool_positions(executed)
+            end = list(points[-1].positions)
+            joint_line = [[s + (e - s) * k / 40 for s, e in zip(start, end)]
+                          for k in range(41)]
+            via_joints = self.tool_positions(joint_line)
+            text += ('tool off the straight line: '
+                     f'planned {self.off_line_mm(planned, a, b):.2f} mm, '
+                     f'executed {self.off_line_mm(measured, a, b):.2f} mm '
+                     f'(a joint-space move: {self.off_line_mm(via_joints, a, b):.1f} mm), ')
+        else:
+            hits = self.straight_move_collides(start, joints)
+            text += f'straight joint move collides at {self.fmt(hits, 41)}, '
+            if final_approach:
+                tx, ty, tz = target_xyz
+                axis_end = (tx - (PRE_APPROACH - STANDOFF), ty, tz)
+                near = [p for p in self.tool_positions(executed)
+                        if math.dist(p, target_xyz) <= PRE_APPROACH - STANDOFF]
+                text += (f'last {100 * (PRE_APPROACH - STANDOFF):.0f} cm off the approach axis '
+                         f'{self.off_line_mm(near, axis_end, target_xyz):.1f} mm, ')
+        text += f'executed path collides at {self.fmt(exec_hits, len(executed))}'
         if target_xyz is not None:
             err = self.tip_error_mm(target_xyz)
             if err is not None:
-                line += f', tool error {err:.1f} mm'
-        self.get_logger().info(line)
+                text += f', tool error {err:.1f} mm'
+        self.get_logger().info(text)
         return True
 
     def run(self):
@@ -298,6 +422,7 @@ class HarvestDemo(Node):
         self.move.wait_for_server()
         self.execute.wait_for_server()
         self.ik.wait_for_service()
+        self.fk.wait_for_service()
         self.validity.wait_for_service()
         while rclpy.ok() and self.joint_state is None:
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -313,20 +438,34 @@ class HarvestDemo(Node):
             fruits = self.find_fruits(cycle)
             if fruits is None:
                 return
+            self.set_fruits(fruits)
+            lin = self.get_parameter('approach').value == 'lin'
             targets = []
             for name, (x, y, z) in fruits:
-                xyz = (x - STANDOFF, y, z)
-                joints = self.solve_ik(xyz)
+                # The tool approaches along +x, so stand off in -x.
+                pick = (x - STANDOFF, y, z)
+                first = (x - PRE_APPROACH, y, z) if lin else pick
+                joints = self.solve_ik(first)
                 if joints is None:
-                    self.get_logger().error(f'no IK solution for {name} at {xyz}')
+                    self.get_logger().error(f'no IK solution for {name} at {first}')
                     return
                 self.get_logger().info(
                     f'[{cycle}] {name} IK: ' + ' '.join(f'{v:+.2f}' for v in joints))
-                targets.append((name, xyz, joints))
-            for name, xyz, joints in targets:
-                if not self.step(cycle, name, joints, xyz):
+                targets.append((name, first, pick, joints))
+            for name, first, pick, joints in targets:
+                if not lin:
+                    if not self.step(cycle, name, joints, pick, final_approach=True):
+                        return
+                    self.sleep(1.0)
+                    continue
+                if not (self.step(cycle, f'{name} pre-approach', joints, first)
+                        and self.step(cycle, f'{name} LIN approach', target_xyz=pick,
+                                      line=(first, pick))):
                     return
-                self.sleep(1.0)
+                self.sleep(0.5)       # where the cutter would act
+                if not self.step(cycle, f'{name} LIN retreat', target_xyz=first,
+                                 line=(pick, first)):
+                    return
             if not self.step(cycle, 'home', HOME):
                 return
             self.sleep(1.0)
