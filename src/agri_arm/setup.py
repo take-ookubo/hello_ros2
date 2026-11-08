@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'pose_cycle = agri_arm.pose_cycle:main',
             'dynamics_test = agri_arm.dynamics_test:main',
+            'mujoco_dynamics = agri_arm.mujoco_dynamics:main',
         ],
     },
 )

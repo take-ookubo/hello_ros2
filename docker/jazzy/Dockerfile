@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-moveit ros-jazzy-moveit-ros-perception \
     && rm -rf /var/lib/apt/lists/*
 
+# MuJoCo for the armature (rotor inertia) check in agri_arm. Pinned; it does
+# not replace the apt numpy that ROS uses.
+RUN pip3 install --break-system-packages --no-cache-dir mujoco==3.17.0
+
 RUN if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then rosdep init; fi \
     && rosdep update --rosdistro jazzy
 
