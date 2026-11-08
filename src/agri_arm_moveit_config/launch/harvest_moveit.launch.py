@@ -79,8 +79,49 @@ def generate_launch_description():
             'use_sim_time': True,
             'run_motions': LaunchConfiguration('demo'),
             'cycles': LaunchConfiguration('cycles'),
+            'use_camera': LaunchConfiguration('camera'),
         }],
         output='screen',
+    )
+
+    # Field camera: Gazebo images to ROS, its pose as TF, and the detector.
+    camera = IfCondition(LaunchConfiguration('camera'))
+    camera_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=[
+            '/field_camera/image@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/field_camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/field_camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+        condition=camera,
+    )
+    # Same pose as the field_camera model in worlds/harvest_world.sdf.
+    camera_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=['--x', '1.0', '--y', '0', '--z', '0.75',
+                   '--roll', '0', '--pitch', '0.48', '--yaw', '3.14159265',
+                   '--frame-id', 'world', '--child-frame-id', 'field_camera_link'],
+        condition=camera,
+    )
+    # Gazebo's camera looks along +x; ROS images use z forward, x right, y down.
+    optical_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=['--roll', '-1.57079633', '--yaw', '-1.57079633',
+                   '--frame-id', 'field_camera_link',
+                   '--child-frame-id', 'field_camera_optical'],
+        condition=camera,
+    )
+    detector = Node(
+        package='agri_perception',
+        executable='fruit_detector',
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+        condition=camera,
     )
 
     return LaunchDescription([
@@ -96,7 +137,14 @@ def generate_launch_description():
                               description='position (ideal servo) or effort (PID torque control)'),
         DeclareLaunchArgument('payload', default_value='0.0',
                               description='Extra mass [kg] at the tool tip'),
+        DeclareLaunchArgument('camera', default_value='true',
+                              description='Find the fruit with the field camera '
+                              '(false: use the fixed positions)'),
         gazebo,
+        camera_bridge,
+        camera_tf,
+        optical_tf,
+        detector,
         OpaqueFunction(function=moveit_nodes),
         demo,
     ])

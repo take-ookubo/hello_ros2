@@ -8,6 +8,8 @@
   <license>Apache-2.0</license>
 
   <exec_depend>agri_arm</exec_depend>
+  <exec_depend>agri_perception</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>

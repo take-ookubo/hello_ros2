@@ -2,7 +2,10 @@
 
 The sequence is home -> left fruit -> right fruit -> home. A support post
 stands between the two fruits, so a straight joint-space move from one fruit
-to the other would hit it. Each fruit pose is turned into joint values with
+to the other would hit it. With use_camera the fruit positions come from
+agri_perception's fruit_detector, read again at home before every cycle,
+and their error from the true positions in the world file is logged.
+Each fruit pose is turned into joint values with
 collision-aware IK, seeded with an elbow-up posture so the solution is a
 natural one. OMPL then plans the joint-space move and the arm executes it.
 For every move the node logs the planning time, whether the straight move
@@ -13,7 +16,7 @@ import math
 import time
 
 import rclpy
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint,
                              MotionPlanRequest, PlanningScene, RobotState)
@@ -31,7 +34,8 @@ TIP = 'tool0'
 FRAME = 'world'
 JOINTS = [f'joint{i}' for i in range(1, 7)]
 
-# Must match worlds/harvest_world.sdf.
+# Must match worlds/harvest_world.sdf. With use_camera, FRUITS is only
+# used as ground truth to report the detection error.
 POST_CENTER = (0.42, 0.0, 0.45)
 POST_SIZE = (0.04, 0.04, 0.9)
 FRUITS = {'left': (0.42, 0.20, 0.45), 'right': (0.42, -0.20, 0.45)}
@@ -65,6 +69,9 @@ class HarvestDemo(Node):
         self.declare_parameter('cycles', 0)
         self.declare_parameter('planning_time', 5.0)
         self.declare_parameter('velocity_scaling', 0.5)
+        self.declare_parameter('use_camera', False)
+        self.declare_parameter('detection_topic', '/fruit_detector/ripe')
+        self.declare_parameter('detection_timeout', 30.0)
         self.move = ActionClient(self, MoveGroup, 'move_action')
         self.execute = ActionClient(self, ExecuteTrajectory, 'execute_trajectory')
         self.ik = self.create_client(GetPositionIK, 'compute_ik')
@@ -75,6 +82,13 @@ class HarvestDemo(Node):
         self.joint_state = None
         self.recorded = None      # joint states captured during execution
         self.create_subscription(JointState, 'joint_states', self.on_joints, 10)
+        self.detections = None
+        if self.get_parameter('use_camera').value:
+            self.create_subscription(PoseArray, self.get_parameter('detection_topic').value,
+                                     self.on_detections, 1)
+
+    def on_detections(self, msg):
+        self.detections = msg
 
     def on_joints(self, msg):
         self.joint_state = msg
@@ -213,6 +227,33 @@ class HarvestDemo(Node):
         pos = dict(zip(js.name, js.position))
         return [pos.get(n, 0.0) for n in JOINTS]
 
+    def find_fruits(self, cycle):
+        """[(name, xyz)] of the fruit to pick, left (+y) to right."""
+        if not self.get_parameter('use_camera').value:
+            return [(f'fruit_{side}', xyz) for side, xyz in FRUITS.items()]
+        # Use an image taken after the arm stopped at home.
+        since = self.get_clock().now()
+        timeout = self.get_parameter('detection_timeout').value
+        end = since + Duration(seconds=timeout)
+        while rclpy.ok():
+            msg = self.detections
+            if msg is not None and Time.from_msg(msg.header.stamp) >= since and msg.poses:
+                break
+            if self.get_clock().now() > end:
+                self.get_logger().error(f'no ripe fruit detected within {timeout:.0f} s')
+                return None
+            rclpy.spin_once(self, timeout_sec=0.1)
+        found = sorted(((p.position.x, p.position.y, p.position.z) for p in msg.poses),
+                       key=lambda c: -c[1])
+        fruits = []
+        for i, xyz in enumerate(found, 1):
+            truth = min(FRUITS.values(), key=lambda t: math.dist(t, xyz))
+            self.get_logger().info(
+                f'[{cycle}] camera fruit_{i} at ' + ' '.join(f'{v:+.3f}' for v in xyz)
+                + f', {1000 * math.dist(truth, xyz):.1f} mm from the true center')
+            fruits.append((f'fruit_{i}', xyz))
+        return fruits
+
     # ----- main sequence -----
     def step(self, cycle, name, joints, target_xyz=None):
         # The controller can still be starting on the first move, so retry.
@@ -260,22 +301,30 @@ class HarvestDemo(Node):
         self.validity.wait_for_service()
         while rclpy.ok() and self.joint_state is None:
             rclpy.spin_once(self, timeout_sec=0.1)
-        targets = {}
-        for side, (x, y, z) in FRUITS.items():
-            xyz = (x - STANDOFF, y, z)
-            joints = self.solve_ik(xyz)
-            if joints is None:
-                self.get_logger().error(f'no IK solution for fruit_{side} at {xyz}')
-                return
-            self.get_logger().info(
-                f'fruit_{side} IK: ' + ' '.join(f'{v:+.2f}' for v in joints))
-            targets[side] = (xyz, joints)
+        # Detection must see the plant from home, so start there.
+        current = self.current_joints()
+        if (self.get_parameter('use_camera').value
+                and max(abs(v) for v in current) > 0.01 and not self.step(0, 'home', HOME)):
+            return
         cycles = self.get_parameter('cycles').value
         cycle = 0
         while rclpy.ok() and (cycles <= 0 or cycle < cycles):
             cycle += 1
-            for side, (xyz, joints) in targets.items():
-                if not self.step(cycle, f'fruit_{side}', joints, xyz):
+            fruits = self.find_fruits(cycle)
+            if fruits is None:
+                return
+            targets = []
+            for name, (x, y, z) in fruits:
+                xyz = (x - STANDOFF, y, z)
+                joints = self.solve_ik(xyz)
+                if joints is None:
+                    self.get_logger().error(f'no IK solution for {name} at {xyz}')
+                    return
+                self.get_logger().info(
+                    f'[{cycle}] {name} IK: ' + ' '.join(f'{v:+.2f}' for v in joints))
+                targets.append((name, xyz, joints))
+            for name, xyz, joints in targets:
+                if not self.step(cycle, name, joints, xyz):
                     return
                 self.sleep(1.0)
             if not self.step(cycle, 'home', HOME):
