@@ -108,6 +108,7 @@ def generate_launch_description():
                 'wrist_view_yaws': [0.0, 45.0, -45.0] if side else [0.0],
                 'if_unseen': LaunchConfiguration('if_unseen'),
                 'align_roll': LaunchConfiguration('align_roll'),
+                'trajectory_log': LaunchConfiguration('trajectory_log'),
             }],
             output='screen',
         )]
@@ -211,6 +212,9 @@ def generate_launch_description():
         DeclareLaunchArgument('if_unseen', default_value='skip',
                               description='Stem not seen from any view: skip the fruit, or '
                               'guess (grasp as if the stem went straight up)'),
+        DeclareLaunchArgument('trajectory_log', default_value='',
+                              description='Append the planned arm trajectories to this file '
+                              '(JSON lines) for agri_arm mujoco_dynamics --trajectories'),
         DeclareLaunchArgument('align_roll', default_value='true',
                               description='Turn the hand (joint6) to the lean of the stem the '
                               'wrist camera sees'),

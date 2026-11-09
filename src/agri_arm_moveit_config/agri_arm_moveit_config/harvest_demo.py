@@ -49,6 +49,7 @@ collided; LIN moves report how far the tool left the straight line, for
 the planned and the executed path, and how far a joint-space move between
 the same two poses would have strayed.
 """
+import json
 import math
 import time
 
@@ -235,6 +236,9 @@ class HarvestDemo(Node):
         # Turn the hand about its approach axis to the stem's lean (needs
         # the wrist camera); at most max_roll [deg].
         self.declare_parameter('align_roll', True)
+        # Append every planned arm trajectory to this file as JSON lines
+        # ('' = off), for agri_arm's mujoco_dynamics --trajectories.
+        self.declare_parameter('trajectory_log', '')
         self.declare_parameter('max_roll', 60.0)
         if self.get_parameter('approach').value not in ('lin', 'joint'):
             raise ValueError('approach must be lin or joint')
@@ -690,6 +694,7 @@ class HarvestDemo(Node):
         else:
             self.get_logger().error(f'{name}: giving up')
             return False
+        self.log_trajectory(name, result.planned_trajectory.joint_trajectory, carrying)
         executed = self.recorded[::5]     # joint_states arrive at 200 Hz
         self.recorded = None
         points = result.planned_trajectory.joint_trajectory.points
@@ -736,6 +741,18 @@ class HarvestDemo(Node):
             self.get_logger().error(f'{name}: the tool did not reach the target')
             return False
         return True
+
+    def log_trajectory(self, name, traj, carrying):
+        path = self.get_parameter('trajectory_log').value
+        if not path:
+            return
+        points = [{'t': p.time_from_start.sec + p.time_from_start.nanosec * 1e-9,
+                   'q': list(p.positions), 'qd': list(p.velocities) or [0.0] * len(p.positions),
+                   'qdd': list(p.accelerations)}
+                  for p in traj.points]
+        with open(path, 'a') as f:
+            f.write(json.dumps({'name': name, 'joints': list(traj.joint_names),
+                                'carrying': carrying is not None, 'points': points}) + '\n')
 
     def fruit_offset(self, model):
         """Gazebo fruit center in the tool frame, or straight below by default."""

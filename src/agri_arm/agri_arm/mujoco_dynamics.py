@@ -13,10 +13,20 @@ and runs the moves of dynamics_test in two ways:
    stiffer set, with and without armature, at a 1 ms control step, to see
    whether the low Gazebo gains are still needed once armature is present.
 
+With armature the inverse-dynamics torques are also checked against the
+modules' speed-torque lines and currents (motors.py).
+
+With --trajectories FILE it checks recorded MoveIt trajectories instead
+of the test moves: harvest_demo writes them with trajectory_log:=FILE
+(one JSON object per move). Moves made while holding a fruit get the
+fruit's mass (--fruit-mass) at the tool on top of --payload.
+
 Run it inside the container (no Gazebo or ROS graph needed):
   ros2 run agri_arm mujoco_dynamics [--payload 0.35] [--speeds 0.5 1.0]
+  ros2 run agri_arm mujoco_dynamics --trajectories /tmp/harvest_traj.jsonl
 """
 import argparse
+import json
 import math
 import os
 
@@ -27,6 +37,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 
 from agri_arm.dynamics_test import MOVES, duration_for, quintic
+from agri_arm.motors import MODULES, check, describe, over, supply_power
 from agri_arm.pose_cycle import JOINTS, MODULE_TORQUE
 
 # Reflected rotor inertia at the joint [kg·m²].
@@ -174,6 +185,108 @@ def home_hold(model, gains):
     return np.max(np.abs(errs[-last:]), 0), np.max(np.abs(vels[-last:]), 0)
 
 
+def resample(times, q, qd, qdd=None, step=0.005):
+    """Resample a trajectory every step (and at its end) the way
+    joint_trajectory_controller interpolates it: quintic segments when the
+    points have accelerations, cubic when they have only velocities.
+    Returns (positions, velocities, accelerations)."""
+    times, q, qd = np.asarray(times, float), np.asarray(q, float), np.asarray(qd, float)
+    cubic = qdd is None
+    qdd = np.zeros_like(q) if cubic else np.asarray(qdd, float)
+    t = np.arange(times[0], times[-1], step)
+    t = np.append(t, times[-1])
+    k = np.clip(np.searchsorted(times, t, side='right') - 1, 0, len(times) - 2)
+    h = (times[k + 1] - times[k])[:, None]
+    tau = t[:, None] - times[k][:, None]
+    p0, v0, a0 = q[k], qd[k], qdd[k]
+    p1, v1, a1 = q[k + 1], qd[k + 1], qdd[k + 1]
+    # p(tau) = sum c_i tau^i with the end conditions; a0 = a1 = 0 and the
+    # tau^5 term vanishing gives back the cubic.
+    c0, c1, c2 = p0, v0, a0 / 2
+    d = p1 - p0 - v0 * h - a0 * h**2 / 2
+    e = v1 - v0 - a0 * h
+    f = a1 - a0
+    c3 = (20 * d - 8 * e * h + f * h**2) / (2 * h**3)
+    c4 = (-30 * d + 14 * e * h - 2 * f * h**2) / (2 * h**4)
+    c5 = (12 * d - 6 * e * h + f * h**2) / (2 * h**5)
+    if cubic:
+        # cubic Hermite through positions and velocities
+        c2 = (3 * d - e * h) / h**2
+        c3 = (-2 * d + e * h) / h**3
+        c4 = c5 = np.zeros_like(c3)
+    pos = c0 + c1 * tau + c2 * tau**2 + c3 * tau**3 + c4 * tau**4 + c5 * tau**5
+    vel = c1 + 2 * c2 * tau + 3 * c3 * tau**2 + 4 * c4 * tau**3 + 5 * c5 * tau**4
+    acc = 2 * c2 + 6 * c3 * tau + 12 * c4 * tau**2 + 20 * c5 * tau**3
+    return pos, vel, acc
+
+
+def motor_report(tau, qd, dt, indent='    '):
+    """Lines of the speed-torque and current check for one move, and
+    whether any joint is over its speed-torque line.
+
+    Per joint: line = largest torque / torque the module can give at that
+    speed (motoring samples), speed = of no-load speed, peak = of the
+    torque cap (peak torque, or peak current x torque constant), RMS = of
+    continuous torque (* provisional), I = peak / RMS current. OVER: over
+    the line, the torque cap or the peak current."""
+    lines, any_over = [], False
+    for i, j in enumerate(JOINTS):
+        result = check(MODULES[j], qd[:, i], tau[:, i], dt)
+        any_over |= over(result)
+        lines.append(indent + describe(j, MODULES[j], result))
+    modules = [MODULES[j] for j in JOINTS]
+    peak = {}
+    for k in range(len(tau)):
+        for volts, watts in supply_power(modules, qd[k], tau[k]).items():
+            peak[volts] = max(peak.get(volts, 0.0), watts)
+    lines.append(indent + 'peak mechanical power, losses not included: '
+                 + ', '.join(f'{v:.0f} V {w:.1f} W ({w / v:.2f} A)'
+                             for v, w in sorted(peak.items(), reverse=True)))
+    return lines, any_over
+
+
+def check_trajectories(path, payload, fruit_mass):
+    """Inverse dynamics with armature and the motor check for recorded moves."""
+    models = {}
+
+    def model_for(mass):
+        if mass not in models:
+            m = load_model(mass)
+            damping, friction = m.dof_damping.copy(), m.dof_frictionloss.copy()
+            m.dof_damping[:] = 0.0
+            m.dof_frictionloss[:] = 0.0
+            set_armature(m, True)
+            models[mass] = (m, mujoco.MjData(m), damping, friction)
+        return models[mass]
+
+    over_moves = []
+    with open(path) as f:
+        moves = [json.loads(line) for line in f if line.strip()]
+    print(f'{len(moves)} moves from {path}, payload {payload} kg, '
+          f'fruit {fruit_mass} kg while carrying, armature on')
+    for move in moves:
+        order = [move['joints'].index(j) for j in JOINTS]
+        pts = move['points']
+        times = [p['t'] for p in pts]
+        if len(times) < 2:
+            continue
+        q = np.array([[p['q'][i] for i in order] for p in pts])
+        qd = np.array([[p['qd'][i] for i in order] for p in pts])
+        qdd = (np.array([[p['qdd'][i] for i in order] for p in pts])
+               if all(p.get('qdd') for p in pts) else None)
+        pos, vel, acc = resample(times, q, qd, qdd)
+        mass = payload + (fruit_mass if move.get('carrying') else 0.0)
+        model, data, damping, friction = model_for(mass)
+        tau = inverse_torque(model, data, pos, vel, acc, damping, friction)
+        print(f'\n== {move["name"]} ({times[-1]:.2f} s'
+              + (', carrying a fruit' if move.get('carrying') else '') + ')')
+        lines, over = motor_report(tau, vel, 0.005)
+        print('\n'.join(lines))
+        if over:
+            over_moves.append(move['name'])
+    print('\nmoves over a speed-torque line: ' + (', '.join(over_moves) or 'none'))
+
+
 def pct(x, j, table):
     return f'{x:.1f}({100 * x / table[j]:.0f}%)'
 
@@ -184,11 +297,18 @@ def main():
                         help='extra mass at the tool tip [kg]')
     parser.add_argument('--speeds', type=float, nargs='+', default=[0.25, 0.5, 1.0],
                         help='fractions of the URDF velocity limit')
+    parser.add_argument('--trajectories', help='JSON lines from harvest_demo trajectory_log')
+    parser.add_argument('--fruit-mass', type=float, default=0.15,
+                        help='[kg] added while a recorded move carries a fruit')
     args = parser.parse_args()
     if not (math.isfinite(args.payload) and args.payload >= 0.0):
         parser.error('--payload must be a finite value >= 0')
     if not all(math.isfinite(x) and 0.0 < x <= 2.0 for x in args.speeds):
         parser.error('--speeds must be in (0, 2]')
+
+    if args.trajectories:
+        check_trajectories(args.trajectories, args.payload, args.fruit_mass)
+        return
 
     model = load_model(args.payload)
     damping = model.dof_damping.copy()
@@ -223,6 +343,9 @@ def main():
                           f'[{100 * rms[i] / MODULE_TORQUE[j]:.0f}%]'
                           f'/peak{100 * peak[i] / PEAK_TORQUE[j]:.0f}%'
                           for i, j in enumerate(JOINTS)))
+                if arm:
+                    lines, _ = motor_report(tau, qd, DT)
+                    print('\n'.join(lines))
             for arm in (False, True):
                 set_armature(model, arm)
                 for label, gains in controllers.items():

@@ -27,7 +27,7 @@ from agri_arm.pose_cycle import JOINTS, MODULE_TORQUE
 
 # URDF velocity limits [rad/s].
 MAX_VEL = {'joint1': 2.0, 'joint2': 1.5, 'joint3': 2.0,
-           'joint4': 3.0, 'joint5': 3.0, 'joint6': 4.0}
+           'joint4': 2.0, 'joint5': 2.0, 'joint6': 3.0}
 H = [0.0, 1.57, 0.0, 0.0, 0.0, 0.0]          # arm stretched out horizontally
 # (name, start, goal). These load the shoulder, base and wrist hardest.
 MOVES = [

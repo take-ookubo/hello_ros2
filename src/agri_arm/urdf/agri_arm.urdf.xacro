@@ -165,9 +165,12 @@
   </link>
   <xacro:color link="link3" rgb="0.85 0.85 0.85"/>
 
-  <!-- XM540-W270: stall 10.6 N·m at 12 V. 6 N·m is a provisional reference. -->
+  <!-- XM540-W270: stall 10.6 N·m at 12 V. 6 N·m is a provisional reference.
+       No-load speed at 12 V is 30 rpm (3.14 rad/s) and the torque falls to
+       zero there; at 2.0 rad/s it still gives about 3.8 N·m (agri_arm
+       motors.py), so the limit is 2.0. -->
   <xacro:arm_joint name="joint4" parent="link3" child="link4" xyz="0 0 ${forearm_root}"
-                   axis="0 0 1" lower="-3.14" upper="3.14" effort="6" velocity="3.0"/>
+                   axis="0 0 1" lower="-3.14" upper="3.14" effort="6" velocity="2.0"/>
 
   <!-- Forearm tube (0.2 kg) with the XM540 wrist pitch motor at its end. -->
   <link name="link4">
@@ -189,7 +192,7 @@
   <xacro:color link="link4" rgb="0.0 0.55 0.25"/>
 
   <xacro:arm_joint name="joint5" parent="link4" child="link5" xyz="0 0 ${forearm}"
-                   axis="0 1 0" lower="-2.0" upper="2.0" effort="6" velocity="3.0"/>
+                   axis="0 1 0" lower="-2.0" upper="2.0" effort="6" velocity="2.0"/>
 
   <!-- Wrist bracket with the XM430 tool roll motor. -->
   <link name="link5">
@@ -205,9 +208,11 @@
   </link>
   <xacro:color link="link5" rgb="0.0 0.55 0.25"/>
 
-  <!-- XM430-W350: stall 4.1 N·m at 12 V. 2.5 N·m is a provisional reference. -->
+  <!-- XM430-W350: stall 4.1 N·m at 12 V. 2.5 N·m is a provisional reference.
+       No-load speed at 12 V is 46 rpm (4.82 rad/s); the limit 3.0 leaves
+       about 1.5 N·m (motors.py). -->
   <xacro:arm_joint name="joint6" parent="link5" child="link6" xyz="0 0 ${wrist_roll}"
-                   axis="0 0 1" lower="-3.14" upper="3.14" effort="2.5" velocity="4.0"/>
+                   axis="0 0 1" lower="-3.14" upper="3.14" effort="2.5" velocity="3.0"/>
 
   <!-- Box inertia about its center. -->
   <xacro:macro name="box_inertial" params="m x y z xyz">
