@@ -1,0 +1,10 @@
+# Calibration for force_logger: value = (raw - offset) * scale.
+# Force channels in N, position in mm. These numbers match the fake
+# source (port:=''); replace them with the output of
+#   ros2 run agri_bench calibrate --channel <name> ...
+# for the real load cells.
+channels:
+  cut:        {offset: 8000.0, scale: 2.0e-4}
+  grip_left:  {offset: -3000.0, scale: 2.0e-4}
+  grip_right: {offset: 1500.0, scale: 2.0e-4}
+  position:   {offset: 0.0, scale: 0.01}
