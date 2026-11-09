@@ -16,6 +16,13 @@ the fruit top and the stem clearly. For each color image the node:
 4. Fits a line to them (principal axis) and returns the point on it
    grasp_above over the fruit top, where the fingers should close.
 
+A leaf can hide the stem, or leave only a short piece of it in view, and
+a line through a few centimetres of points or through stray pixels is not
+a stem. The node publishes nothing (and warns why) unless there are
+min_stem_points, they span at least min_span along the line, and their
+distance from it is at most max_rms. harvest_demo then looks again from
+another side.
+
 The result goes to ~/grasp as a PoseStamped: position = grasp point,
 orientation = rotation from +z to the stem direction (pointing up). The
 tilt from vertical, the fruit center and the number of stem points are
@@ -70,6 +77,8 @@ class StemDetector(Node):
         self.declare_parameter('region_radius', 0.05)   # sideways from the center [m]
         self.declare_parameter('min_area', 40)          # fruit blob [pixels]
         self.declare_parameter('min_stem_points', 30)
+        self.declare_parameter('min_span', 0.02)        # along the stem [m]
+        self.declare_parameter('max_rms', 0.003)        # off the fitted line [m]
         self.bridge = CvBridge()
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
@@ -168,9 +177,17 @@ class StemDetector(Node):
         d = vt[0] if vt[0][2] >= 0 else -vt[0]
         if d[2] < 0.3:      # more than ~70° from vertical: not a stem
             return
+        residual = np.linalg.norm(np.cross(pts - mean, d), axis=1)
+        rms = math.sqrt(np.mean(residual ** 2))
+        along = (pts - mean) @ d
+        span = float(along.max() - along.min())
+        if span < p('min_span') or rms > p('max_rms'):
+            self.get_logger().warn(
+                f'stem fit rejected: {len(pts)} points spanning {100 * span:.1f} cm, '
+                f'rms {1000 * rms:.1f} mm', throttle_duration_sec=5.0)
+            return
         grasp_z = top + p('grasp_above')
         grasp = mean + d * (grasp_z - mean[2]) / d[2]
-        residual = np.linalg.norm(np.cross(pts - mean, d), axis=1)
 
         out = PoseStamped()
         out.header.stamp = msg.header.stamp
@@ -189,7 +206,7 @@ class StemDetector(Node):
             self.get_logger().info(
                 'grasp point ' + ' '.join(f'{c:+.3f}' for c in grasp)
                 + f', stem tilt {tilt:.1f}° toward ({d[0]:+.2f} {d[1]:+.2f}), '
-                f'{len(pts)} points (rms {1000 * math.sqrt(np.mean(residual ** 2)):.1f} mm), '
+                f'{len(pts)} points spanning {100 * span:.1f} cm (rms {1000 * rms:.1f} mm), '
                 'fruit center ' + ' '.join(f'{c:+.3f}' for c in center))
 
 

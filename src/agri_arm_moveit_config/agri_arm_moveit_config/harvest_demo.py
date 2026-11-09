@@ -20,8 +20,12 @@ OMPL goes straight to the stem.
 
 With use_wrist_camera the hand stops at the pre-approach pose and
 agri_perception's stem_detector looks at the stem with the wrist camera;
-the straight approach is then moved onto the stem it sees. Without it the
-stem is assumed to go straight up from the fruit. After the fingers close
+the straight approach is then moved onto the stem it sees. If a leaf hides
+the stem, the hand looks again from the sides (wrist_view_yaws: the view
+turned about the vertical through the stem) and comes back in front of the
+stem it saw. If no view sees it the fruit is skipped and left on the plant
+(if_unseen:=guess grasps at the straight-up guess instead). Without the
+wrist camera the stem is assumed to go straight up from the fruit. After the fingers close
 the node logs how far the finger center is from the true stem (STEMS).
 
 In Gazebo the cut and the hold are detachable joints (plant-fruit and
@@ -141,6 +145,15 @@ def quat_conj(q):
     return (-q[0], -q[1], -q[2], q[3])
 
 
+def quat_mul(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
 def quat_apply(q, v):
     """Rotate vector v by quaternion q = (x, y, z, w)."""
     x, y, z, w = q
@@ -179,10 +192,16 @@ class HarvestDemo(Node):
         self.declare_parameter('approach_scaling', 0.2)   # Pilz LIN speed factor
         self.declare_parameter('use_wrist_camera', False)
         self.declare_parameter('wrist_topic', '/stem_detector/grasp')
-        self.declare_parameter('wrist_timeout', 10.0)
+        self.declare_parameter('wrist_timeout', 3.0)      # per view [s]
+        # Views to try, as yaw [deg] about the vertical through the stem;
+        # 0 is the pre-approach pose, +45 looks from the -y side.
+        self.declare_parameter('wrist_view_yaws', [0.0, 45.0, -45.0])
+        self.declare_parameter('if_unseen', 'skip')       # skip or guess
         self.declare_parameter('max_correction', 0.04)    # ignore larger [m]
         if self.get_parameter('approach').value not in ('lin', 'joint'):
             raise ValueError('approach must be lin or joint')
+        if self.get_parameter('if_unseen').value not in ('skip', 'guess'):
+            raise ValueError('if_unseen must be skip or guess')
         self.move = ActionClient(self, MoveGroup, 'move_action')
         self.execute = ActionClient(self, ExecuteTrajectory, 'execute_trajectory')
         self.ik = self.create_client(GetPositionIK, 'compute_ik')
@@ -696,21 +715,22 @@ class HarvestDemo(Node):
         self.get_logger().info(f'[{cycle}] {model} held: center {1000 * math.dist(fruit, expected):.1f}'
                                ' mm from where it was at the grasp')
 
-    def wrist_correction(self, cycle, model, stem):
-        """Stem grasp point seen by the wrist camera, or stem if none."""
+    def wrist_correction(self, cycle, model, stem, view):
+        """Stem grasp point seen by the wrist camera, or None if not seen."""
         since = self.get_clock().now()
         timeout = self.get_parameter('wrist_timeout').value
         msg = self.wait_detection('wrist', since, timeout)
         if msg is None:
-            self.get_logger().warn(f'[{cycle}] {model}: wrist camera saw no stem within '
-                                   f'{timeout:.0f} s; assuming it goes straight up')
-            return stem
+            self.get_logger().warn(f'[{cycle}] {model}: wrist camera saw no stem from the '
+                                   f'{view} view within {timeout:.0f} s')
+            return None
         p, o = msg.pose.position, msg.pose.orientation
         seen = (p.x, p.y, p.z)
         up = quat_apply((o.x, o.y, o.z, o.w), (0.0, 0.0, 1.0))
         tilt = math.degrees(math.acos(max(-1.0, min(1.0, up[2]))))
         shift = math.dist(seen, stem)
-        text = (f'[{cycle}] {model} wrist camera: stem at ' + ' '.join(f'{v:+.3f}' for v in seen)
+        text = (f'[{cycle}] {model} wrist camera ({view} view): stem at '
+                + ' '.join(f'{v:+.3f}' for v in seen)
                 + f', tilt {tilt:.0f}°, {1000 * shift:.1f} mm from the straight-up guess')
         if model in STEMS:
             a, d = STEMS[model]
@@ -719,8 +739,35 @@ class HarvestDemo(Node):
         self.get_logger().info(text)
         if shift > self.get_parameter('max_correction').value:
             self.get_logger().warn(f'[{cycle}] {model}: correction too large, not used')
-            return stem
+            return None
         return seen
+
+    def look_at_stem(self, cycle, model, stem):
+        """Wrist camera grasp point from the first view that sees the stem.
+
+        Returns (seen, moved): seen is None if no view saw it; moved is
+        True when the hand left the pre-approach pose for a side view.
+        """
+        moved = False
+        for yaw in self.get_parameter('wrist_view_yaws').value:
+            view = 'front' if yaw == 0.0 else f'{yaw:+.0f}°'
+            if yaw != 0.0:
+                # Same distance from the stem, turned about the vertical.
+                c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+                xyz = (stem[0] - PRE_APPROACH * c, stem[1] - PRE_APPROACH * s, stem[2])
+                quat = quat_mul((0.0, 0.0, math.sin(math.radians(yaw) / 2),
+                                 math.cos(math.radians(yaw) / 2)), APPROACH_QUAT)
+                joints = self.solve_ik(xyz, quat)
+                if joints is None:
+                    self.get_logger().warn(f'[{cycle}] {model}: no IK for the {view} view')
+                    continue
+                if not self.step(cycle, f'{model} {view} view', joints, xyz):
+                    continue
+                moved = True
+            seen = self.wrist_correction(cycle, model, stem, view)
+            if seen is not None:
+                return seen, moved
+        return None, moved
 
     def check_in_crate(self, cycle, model):
         self.sleep(1.5)       # let it fall and settle
@@ -735,25 +782,42 @@ class HarvestDemo(Node):
         return inside
 
     def harvest(self, cycle, model, first, stem, joints, drop_joints, lin):
-        """Approach the stem, grasp, cut, carry to the crate and release."""
+        """Approach the stem, grasp, cut, carry to the crate and release.
+
+        Returns 'picked', 'skipped' (stem not seen, nothing touched) or
+        'failed'.
+        """
         if lin:
             if not self.step(cycle, f'{model} pre-approach', joints, first):
-                return False
+                return 'failed'
             if self.get_parameter('use_wrist_camera').value:
-                seen = self.wrist_correction(cycle, model, stem)
-                if seen != stem:
-                    # Move sideways in front of the seen stem, then go in
-                    # straight along +x as before.
-                    aligned = (seen[0] - PRE_APPROACH, seen[1], seen[2])
-                    if not self.step(cycle, f'{model} LIN align', target_xyz=aligned,
-                                     line=(first, aligned)):
-                        return False
-                    first, stem = aligned, seen
+                seen, moved = self.look_at_stem(cycle, model, stem)
+                if seen is None:
+                    if self.get_parameter('if_unseen').value == 'skip':
+                        self.get_logger().warn(f'[{cycle}] {model}: stem not seen from any '
+                                               'view; skipped, left on the plant')
+                        return 'skipped'
+                    self.get_logger().warn(f'[{cycle}] {model}: stem not seen from any '
+                                           'view; grasping at the straight-up guess')
+                    seen = stem
+                # In front of the seen stem, then straight in along +x as
+                # before: sideways by LIN from the pre-approach pose, or
+                # back from a side view by OMPL.
+                aligned = (seen[0] - PRE_APPROACH, seen[1], seen[2])
+                if moved:
+                    back_joints = self.solve_ik(aligned)
+                    if back_joints is None or not self.step(
+                            cycle, f'{model} back in front', back_joints, aligned):
+                        return 'failed'
+                elif seen != stem and not self.step(cycle, f'{model} LIN align',
+                                                    target_xyz=aligned, line=(first, aligned)):
+                    return 'failed'
+                first, stem = aligned, seen
             if not self.step(cycle, f'{model} LIN approach', target_xyz=stem,
                              line=(first, stem)):
-                return False
+                return 'failed'
         elif not self.step(cycle, model, joints, stem, final_approach=True):
-            return False
+            return 'failed'
         pose = self.tool_pose()
         if model in STEMS and pose is not None:
             a, d = STEMS[model]
@@ -777,15 +841,15 @@ class HarvestDemo(Node):
             ok = self.step(cycle, f'{model} retreat', self.solve_ik(back) or joints, back,
                            carrying=offset)
         if not ok:
-            return False
+            return 'failed'
         self.check_held(cycle, model, offset)
         if not self.step(cycle, f'{model} to crate', drop_joints, DROP_XYZ, carrying=offset):
-            return False
+            return 'failed'
         self.check_held(cycle, model, offset)
         self.set_hand(FINGERS_OPEN, CUTTER_OPEN)
         self.gz_send(model, 'hand', 'detach')
         self.drop_fruit(model)
-        return self.check_in_crate(cycle, model)
+        return 'picked' if self.check_in_crate(cycle, model) else 'failed'
 
     def release_arm(self):
         """Gazebo attaches the hand joints when the arm is spawned: undo that.
@@ -856,13 +920,15 @@ class HarvestDemo(Node):
                 self.get_logger().info(
                     f'[{cycle}] {model} IK: ' + ' '.join(f'{v:+.2f}' for v in joints))
                 targets.append((model, first, stem, joints))
-            picked = []
+            picked, skipped = [], []
             for model, first, stem, joints in targets:
-                ok = self.harvest(cycle, model, first, stem, joints, drop_joints, lin)
-                picked.append(model)
-                if not ok:
+                status = self.harvest(cycle, model, first, stem, joints, drop_joints, lin)
+                if status == 'failed':
                     self.get_logger().error(f'[{cycle}] {model}: harvest failed')
                     return
+                (picked if status == 'picked' else skipped).append(model)
+            self.get_logger().info(f'[{cycle}] picked {len(picked)}/{len(targets)}'
+                                   + (f', skipped {" ".join(skipped)}' if skipped else ''))
             if not self.step(cycle, 'home', HOME):
                 return
             self.replant(picked)

@@ -93,19 +93,23 @@ def generate_launch_description():
 
     # Always started: it adds the post and floor to the planning scene.
     # With demo:=false it exits after that instead of moving the arm.
-    demo = Node(
-        package='agri_arm_moveit_config',
-        executable='harvest_demo',
-        parameters=[{
-            'use_sim_time': True,
-            'run_motions': LaunchConfiguration('demo'),
-            'cycles': LaunchConfiguration('cycles'),
-            'use_camera': LaunchConfiguration('camera'),
-            'approach': LaunchConfiguration('approach'),
-            'use_wrist_camera': LaunchConfiguration('wrist_camera'),
-        }],
-        output='screen',
-    )
+    def demo_node(context):
+        side = LaunchConfiguration('side_views').perform(context).lower() == 'true'
+        return [Node(
+            package='agri_arm_moveit_config',
+            executable='harvest_demo',
+            parameters=[{
+                'use_sim_time': True,
+                'run_motions': LaunchConfiguration('demo'),
+                'cycles': LaunchConfiguration('cycles'),
+                'use_camera': LaunchConfiguration('camera'),
+                'approach': LaunchConfiguration('approach'),
+                'use_wrist_camera': LaunchConfiguration('wrist_camera'),
+                'wrist_view_yaws': [0.0, 45.0, -45.0] if side else [0.0],
+                'if_unseen': LaunchConfiguration('if_unseen'),
+            }],
+            output='screen',
+        )]
 
     # Field camera: Gazebo images to ROS, its pose as TF, and the detector.
     camera = IfCondition(LaunchConfiguration('camera'))
@@ -145,6 +149,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         output='screen',
         condition=camera,
+    )
+
+    # Leaves in front of the stems (worlds/leaves.sdf), to test occlusion.
+    leaves = Node(
+        package='ros_gz_sim',
+        executable='create',
+        arguments=['-name', 'leaves', '-file', os.path.join(share, 'worlds', 'leaves.sdf')],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('leaves')),
     )
 
     # Wrist camera on the hand: images to ROS and the stem detector.
@@ -191,7 +204,16 @@ def generate_launch_description():
         DeclareLaunchArgument('wrist_camera', default_value='true',
                               description='Correct the grasp point from the wrist camera '
                               '(false: assume the stem goes straight up)'),
+        DeclareLaunchArgument('side_views', default_value='true',
+                              description='Look again from 45° to each side when the wrist '
+                              'camera does not see the stem'),
+        DeclareLaunchArgument('if_unseen', default_value='skip',
+                              description='Stem not seen from any view: skip the fruit, or '
+                              'guess (grasp as if the stem went straight up)'),
+        DeclareLaunchArgument('leaves', default_value='true',
+                              description='Add leaves that hide the stems (worlds/leaves.sdf)'),
         gazebo,
+        leaves,
         sim_bridge,
         wrist_bridge,
         stem_detector,
@@ -200,5 +222,5 @@ def generate_launch_description():
         optical_tf,
         detector,
         OpaqueFunction(function=moveit_nodes),
-        demo,
+        OpaqueFunction(function=demo_node),
     ])

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Leaves in front of the ripe fruit stems, seen from the arm side (-x).
+     harvest_moveit.launch.py spawns this model into harvest_world with
+     leaves:=true (default). The leaves are visuals only: the hand passes
+     through them (a real hand would push them aside) and they are not in
+     the MoveIt planning scene. Their green is darker and bluer than the
+     unripe fruit (fruit_detector) and more saturated than the stems
+     (stem_detector), so only the occlusion matters.
+     - Left fruit: a narrow leaf crossing the middle of the stem, 2 cm in
+       front of it. From the pre-approach pose the stem is seen in two
+       pieces, above and below the leaf.
+     - Right fruit: a wide leaf 3 cm in front of the stem that hides all of
+       it from the pre-approach pose. Only a view from the side, about 45°
+       off the approach, sees part of the stem past the leaf edge. -->
+<sdf version="1.8">
+  <model name="leaves">
+    <static>true</static>
+    <link name="link">
+      <visual name="leaf_left">
+        <pose>0.40 0.18 0.521 0 0 0</pose>
+        <geometry><box><size>0.002 0.06 0.018</size></box></geometry>
+        <material><ambient>0.1 0.45 0.2 1</ambient><diffuse>0.1 0.45 0.2 1</diffuse></material>
+      </visual>
+      <visual name="leaf_right">
+        <pose>0.39 -0.177 0.539 0 0 0</pose>
+        <geometry><box><size>0.002 0.07 0.09</size></box></geometry>
+        <material><ambient>0.1 0.45 0.2 1</ambient><diffuse>0.1 0.45 0.2 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>
