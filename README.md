@@ -610,6 +610,7 @@ RGB-D カメラの画像から果実を見つけ、その位置へ向かいま�
 
 [`docs/stem_force_test_plan.md`](docs/stem_force_test_plan.md) の卓上試験で、ロードセルの力を記録します。
 Jazzy 環境専用です。ボードがなくても、偽のボードで一通り動かせます。
+試験台の部品と費用は [`docs/stem_force_bench_bom.md`](docs/stem_force_bench_bom.md)（試験台だけで約 7.6万〜14.3万円）。
 
 ```bash
 # 偽のボード（port を空にする）。実機では port:=/dev/ttyACM0 など
