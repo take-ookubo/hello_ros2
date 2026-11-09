@@ -20,7 +20,11 @@ OMPL goes straight to the stem.
 
 With use_wrist_camera the hand stops at the pre-approach pose and
 agri_perception's stem_detector looks at the stem with the wrist camera;
-the straight approach is then moved onto the stem it sees. If a leaf hides
+the straight approach is then moved onto the stem it sees, and with
+align_roll the hand is also turned about its approach axis (joint6) so
+that its "up" (tool -x) follows the stem's lean: the finger pads then lie
+along the stem and the blade, 1.5 cm above the fingers, crosses it right
+over the finger center instead of beside it. If a leaf hides
 the stem, the hand looks again from the sides (wrist_view_yaws: the view
 turned about the vertical through the stem) and comes back in front of the
 stem it saw. If no view sees it the fruit is skipped and left on the plant
@@ -33,8 +37,10 @@ hand-fruit) switched over ros_gz_bridge; the fingers do not hold the fruit
 by friction. In MoveIt the fruit becomes an object attached to the tool
 once it is cut, so the moves to the crate avoid obstacles with it. For
 those moves the node reports the peak acceleration of the fruit and the
-finger force that friction alone would need to hold it. After every cycle
-the fruit are hung back on the plant (set_pose + attach) for the next one.
+finger force that friction alone would need to hold it. After the grasp
+it also logs the angle between the hand's up axis and the true stem and
+how far sideways from the finger center the blade meets that stem. After
+every cycle the fruit are hung back on the plant (set_pose + attach) for the next one.
 
 For every move the node logs the planning time, whether the joint
 states measured during execution collided, and the tool position error.
@@ -114,6 +120,7 @@ FRICTION = 0.5            # assumed finger pad - stem friction coefficient
 # Hand joint targets [m]: fingers 0 = open, 0.027 = on a 6 mm stem.
 FINGERS_OPEN, FINGERS_CLOSED = 0.0, 0.027
 CUTTER_OPEN, CUTTER_CLOSED = 0.0, 0.06
+CUT_ABOVE = 0.015         # blade above the finger center (tool -x) [m], as in the URDF
 # Tool z axis pointing along +x (tool -x up): rotate +90 degrees about y.
 APPROACH_QUAT = (0.0, math.sqrt(0.5), 0.0, math.sqrt(0.5))
 # Above the crate, tool z along +y and tool -x still up.
@@ -152,6 +159,33 @@ def quat_mul(a, b):
             aw * by - ax * bz + ay * bw + az * bx,
             aw * bz + ax * by - ay * bx + az * bw,
             aw * bw - ax * bx - ay * by - az * bz)
+
+
+def quat_axis_angle(axis, angle):
+    s = math.sin(angle / 2)
+    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(angle / 2))
+
+
+def roll_to_stem(quat, up):
+    """Turn the tool about its approach axis so that its up (-x) follows up.
+
+    Returns (new quaternion, roll [deg], what is left [deg]): only the part
+    of up across the approach axis can be followed; the lean toward or
+    away from the hand is left.
+    """
+    a = quat_apply(quat, (0.0, 0.0, 1.0))
+    u0 = quat_apply(quat, (-1.0, 0.0, 0.0))
+    along = sum(x * y for x, y in zip(up, a))
+    u = [x - along * y for x, y in zip(up, a)]
+    n = math.hypot(*u)
+    if n < 1e-6:
+        return quat, 0.0, 90.0
+    u = [x / n for x in u]
+    cross = (u0[1] * u[2] - u0[2] * u[1], u0[2] * u[0] - u0[0] * u[2],
+             u0[0] * u[1] - u0[1] * u[0])
+    angle = math.atan2(sum(c * x for c, x in zip(cross, a)), sum(x * y for x, y in zip(u0, u)))
+    left = math.degrees(math.asin(min(1.0, abs(along))))
+    return quat_mul(quat_axis_angle(a, angle), quat), math.degrees(angle), left
 
 
 def quat_apply(q, v):
@@ -198,6 +232,10 @@ class HarvestDemo(Node):
         self.declare_parameter('wrist_view_yaws', [0.0, 45.0, -45.0])
         self.declare_parameter('if_unseen', 'skip')       # skip or guess
         self.declare_parameter('max_correction', 0.04)    # ignore larger [m]
+        # Turn the hand about its approach axis to the stem's lean (needs
+        # the wrist camera); at most max_roll [deg].
+        self.declare_parameter('align_roll', True)
+        self.declare_parameter('max_roll', 60.0)
         if self.get_parameter('approach').value not in ('lin', 'joint'):
             raise ValueError('approach must be lin or joint')
         if self.get_parameter('if_unseen').value not in ('skip', 'guess'):
@@ -412,8 +450,9 @@ class HarvestDemo(Node):
                             tolerance_below=0.002, weight=1.0)
             for n, v in zip(JOINTS, values)])
 
-    def pose_goal(self, xyz):
-        """tool0 at xyz (within 1 mm) facing +x, for the Pilz LIN planner."""
+    def pose_goal(self, xyz, quat=APPROACH_QUAT):
+        """tool0 at xyz (within 1 mm) with orientation quat (default facing
+        +x), for the Pilz LIN planner."""
         region = BoundingVolume()
         region.primitives.append(SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.001]))
         center = Pose()
@@ -427,7 +466,7 @@ class HarvestDemo(Node):
                                     absolute_z_axis_tolerance=0.01)
         ori.header.frame_id = FRAME
         (ori.orientation.x, ori.orientation.y,
-         ori.orientation.z, ori.orientation.w) = APPROACH_QUAT
+         ori.orientation.z, ori.orientation.w) = quat
         return Constraints(position_constraints=[pos], orientation_constraints=[ori])
 
     def plan(self, goal, lin=False):
@@ -539,6 +578,8 @@ class HarvestDemo(Node):
         """Largest distance [mm] of points from the segment a-b."""
         ab = [bi - ai for ai, bi in zip(a, b)]
         n2 = sum(c * c for c in ab)
+        if n2 == 0.0:     # a turn on the spot: distance from the point
+            return 1000 * max((math.dist(p, a) for p in points), default=0.0)
         worst = 0.0
         for p in points:
             ap = [pi - ai for ai, pi in zip(a, p)]
@@ -622,9 +663,9 @@ class HarvestDemo(Node):
 
     # ----- main sequence -----
     def step(self, cycle, name, joints=None, target_xyz=None, line=None, final_approach=False,
-             carrying=None):
+             carrying=None, quat=APPROACH_QUAT):
         """Plan and run one move: a joint goal (OMPL), or with line=(a, b) a
-        Pilz LIN move of tool0 from a to b.
+        Pilz LIN move of tool0 from a to b, ending with orientation quat.
 
         final_approach: also report how far the tool strayed from the +x
         approach axis through target_xyz during the last PRE_APPROACH of
@@ -633,7 +674,7 @@ class HarvestDemo(Node):
         its peak acceleration and the finger force needed to hold it by
         friction.
         """
-        goal = self.pose_goal(line[1]) if line else self.joint_goal(joints)
+        goal = self.pose_goal(line[1], quat) if line else self.joint_goal(joints)
         # The controller can still be starting on the first move, so retry.
         for _ in range(30):
             start = self.current_joints()
@@ -704,6 +745,22 @@ class HarvestDemo(Node):
         p, o = pose
         return quat_apply(quat_conj(o), [fi - pi for fi, pi in zip(fruit, p)])
 
+    @staticmethod
+    def stem_alignment(pose, a, d):
+        """Text: angle of the hand's up axis to the stem line (a, d), and how
+        far sideways from the finger center the blade meets that stem."""
+        p, o = pose
+        inv = quat_conj(o)
+        at = quat_apply(inv, [ai - pi for ai, pi in zip(a, p)])
+        dt = quat_apply(inv, d)
+        angle = math.degrees(math.acos(min(1.0, abs(dt[0]))))
+        text = f'hand up axis {angle:.1f}° from the stem'
+        if abs(dt[0]) > 1e-6:
+            # the blade moves along tool y in the plane x = -CUT_ABOVE
+            s = (-CUT_ABOVE - at[0]) / dt[0]
+            text += f', blade meets it {1000 * (at[1] + s * dt[1]):+.1f} mm sideways'
+        return text
+
     def check_held(self, cycle, model, offset):
         """Log how far the Gazebo fruit is from where the hand holds it."""
         pose, fruit = self.tool_pose(), self.gz_pose(model)
@@ -716,7 +773,7 @@ class HarvestDemo(Node):
                                ' mm from where it was at the grasp')
 
     def wrist_correction(self, cycle, model, stem, view):
-        """Stem grasp point seen by the wrist camera, or None if not seen."""
+        """(grasp point, stem direction up) seen by the wrist camera, or None."""
         since = self.get_clock().now()
         timeout = self.get_parameter('wrist_timeout').value
         msg = self.wait_detection('wrist', since, timeout)
@@ -740,13 +797,14 @@ class HarvestDemo(Node):
         if shift > self.get_parameter('max_correction').value:
             self.get_logger().warn(f'[{cycle}] {model}: correction too large, not used')
             return None
-        return seen
+        return seen, up
 
     def look_at_stem(self, cycle, model, stem):
         """Wrist camera grasp point from the first view that sees the stem.
 
-        Returns (seen, moved): seen is None if no view saw it; moved is
-        True when the hand left the pre-approach pose for a side view.
+        Returns (seen, moved): seen is (grasp point, stem direction) or
+        None if no view saw it; moved is True when the hand left the
+        pre-approach pose for a side view.
         """
         moved = False
         for yaw in self.get_parameter('wrist_view_yaws').value:
@@ -787,34 +845,49 @@ class HarvestDemo(Node):
         Returns 'picked', 'skipped' (stem not seen, nothing touched) or
         'failed'.
         """
+        quat = APPROACH_QUAT
         if lin:
             if not self.step(cycle, f'{model} pre-approach', joints, first):
                 return 'failed'
             if self.get_parameter('use_wrist_camera').value:
-                seen, moved = self.look_at_stem(cycle, model, stem)
-                if seen is None:
+                found, moved = self.look_at_stem(cycle, model, stem)
+                if found is None:
                     if self.get_parameter('if_unseen').value == 'skip':
                         self.get_logger().warn(f'[{cycle}] {model}: stem not seen from any '
                                                'view; skipped, left on the plant')
                         return 'skipped'
                     self.get_logger().warn(f'[{cycle}] {model}: stem not seen from any '
                                            'view; grasping at the straight-up guess')
-                    seen = stem
+                    seen, up = stem, None
+                else:
+                    seen, up = found
+                if up is not None and self.get_parameter('align_roll').value:
+                    turned, roll, left = roll_to_stem(APPROACH_QUAT, up)
+                    limit = self.get_parameter('max_roll').value
+                    if abs(roll) > limit:
+                        self.get_logger().warn(f'[{cycle}] {model}: roll {roll:+.0f}° is more '
+                                               f'than {limit:.0f}°, not turned')
+                    else:
+                        quat = turned
+                        self.get_logger().info(f'[{cycle}] {model}: hand turned {roll:+.1f}° '
+                                               f'to the stem ({left:.1f}° of lean toward or '
+                                               'away from the hand left)')
                 # In front of the seen stem, then straight in along +x as
-                # before: sideways by LIN from the pre-approach pose, or
-                # back from a side view by OMPL.
+                # before: sideways by LIN from the pre-approach pose (turning
+                # the hand on the way), or back from a side view by OMPL.
                 aligned = (seen[0] - PRE_APPROACH, seen[1], seen[2])
                 if moved:
-                    back_joints = self.solve_ik(aligned)
+                    back_joints = self.solve_ik(aligned, quat)
                     if back_joints is None or not self.step(
                             cycle, f'{model} back in front', back_joints, aligned):
                         return 'failed'
-                elif seen != stem and not self.step(cycle, f'{model} LIN align',
-                                                    target_xyz=aligned, line=(first, aligned)):
+                elif (seen != stem or quat != APPROACH_QUAT) and not self.step(
+                        cycle, f'{model} LIN align', target_xyz=aligned,
+                        line=(first, aligned), quat=quat):
                     return 'failed'
                 first, stem = aligned, seen
             if not self.step(cycle, f'{model} LIN approach', target_xyz=stem,
-                             line=(first, stem)):
+                             line=(first, stem), quat=quat):
                 return 'failed'
         elif not self.step(cycle, model, joints, stem, final_approach=True):
             return 'failed'
@@ -822,7 +895,8 @@ class HarvestDemo(Node):
         if model in STEMS and pose is not None:
             a, d = STEMS[model]
             self.get_logger().info(f'[{cycle}] {model}: finger center '
-                                   f'{point_line_mm(pose[0], a, d):.1f} mm from the true stem')
+                                   f'{point_line_mm(pose[0], a, d):.1f} mm from the true stem, '
+                                   + self.stem_alignment(pose, a, d))
         # Grasp the stem, then cut above the fingers. In Gazebo the hand
         # joint holds the fruit and detaching the stem joint is the cut.
         self.set_hand(FINGERS_CLOSED, CUTTER_OPEN)
@@ -836,7 +910,7 @@ class HarvestDemo(Node):
         back = (stem[0] - PRE_APPROACH, stem[1], stem[2])
         if lin:
             ok = self.step(cycle, f'{model} LIN retreat', target_xyz=back,
-                           line=(stem, back), carrying=offset)
+                           line=(stem, back), carrying=offset, quat=quat)
         else:
             ok = self.step(cycle, f'{model} retreat', self.solve_ik(back) or joints, back,
                            carrying=offset)
