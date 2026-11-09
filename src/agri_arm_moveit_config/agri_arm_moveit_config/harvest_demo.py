@@ -18,6 +18,12 @@ PRE_APPROACH in front of the stem; the Pilz LIN planner then moves the
 tool in a straight line to the stem and back out. With approach:=joint
 OMPL goes straight to the stem.
 
+With use_wrist_camera the hand stops at the pre-approach pose and
+agri_perception's stem_detector looks at the stem with the wrist camera;
+the straight approach is then moved onto the stem it sees. Without it the
+stem is assumed to go straight up from the fruit. After the fingers close
+the node logs how far the finger center is from the true stem (STEMS).
+
 In Gazebo the cut and the hold are detachable joints (plant-fruit and
 hand-fruit) switched over ros_gz_bridge; the fingers do not hold the fruit
 by friction. In MoveIt the fruit becomes an object attached to the tool
@@ -75,6 +81,15 @@ BRANCH_CENTER = (0.42, 0.0, 0.59)
 BRANCH_SIZE = (0.02, 0.6, 0.02)
 FRUITS = {'fruit_left': (0.42, 0.20, 0.45), 'fruit_right': (0.42, -0.20, 0.45)}
 UNRIPE = [(0.42, -0.08, 0.45)]
+# True stem lines (point on the fruit top, unit direction up), as in the
+# world file: the left stem leans 30° to -y, the right one 35° to +y. Only
+# used to report how far the fingers close from the real stem.
+STEMS = {
+    'fruit_left': ((0.42, 0.20, 0.485), (0.0, -math.sin(math.radians(30)),
+                                         math.cos(math.radians(30)))),
+    'fruit_right': ((0.42, -0.20, 0.485), (0.0, math.sin(math.radians(35)),
+                                           math.cos(math.radians(35)))),
+}
 CRATE = [  # (name, center, size)
     ('crate_stand', (0.05, 0.42, 0.05), (0.24, 0.20, 0.10)),
     ('crate_front', (0.165, 0.42, 0.15), (0.01, 0.20, 0.10)),
@@ -85,9 +100,9 @@ CRATE = [  # (name, center, size)
 CRATE_INSIDE = ((-0.06, 0.16), (0.33, 0.51), (0.10, 0.20))   # x, y, z ranges
 FRUIT_RADIUS = 0.035
 FRUIT_MASS = 0.15         # [kg], as in the world file
-# The fruit hangs on its stem, so the fingers close on the stem this far
-# above the fruit center (radius + 2 cm). In the tool frame the fruit
-# center is then GRASP_ABOVE along +x (down).
+# The fingers close on the stem this far above the fruit center (radius +
+# 2 cm). Without the wrist camera the stem is assumed to go straight up, so
+# in the tool frame the fruit center is GRASP_ABOVE along +x (down).
 GRASP_ABOVE = FRUIT_RADIUS + 0.02
 PRE_APPROACH = 0.10       # LIN approach starts this far in front of the stem [m]
 MATCH_DISTANCE = 0.03     # a detection this close to a true fruit is that fruit [m]
@@ -113,6 +128,17 @@ def box(name, center, size):
 def sphere(name, center, radius, frame=FRAME):
     return shape(name, center, SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[radius]),
                  frame)
+
+
+def point_line_mm(p, a, d):
+    """Distance [mm] of point p from the line through a with unit direction d."""
+    ap = [pi - ai for pi, ai in zip(p, a)]
+    t = sum(x * y for x, y in zip(ap, d))
+    return 1000 * math.dist(ap, [t * di for di in d])
+
+
+def quat_conj(q):
+    return (-q[0], -q[1], -q[2], q[3])
 
 
 def quat_apply(q, v):
@@ -151,6 +177,10 @@ class HarvestDemo(Node):
         self.declare_parameter('detection_timeout', 30.0)
         self.declare_parameter('approach', 'lin')         # lin or joint
         self.declare_parameter('approach_scaling', 0.2)   # Pilz LIN speed factor
+        self.declare_parameter('use_wrist_camera', False)
+        self.declare_parameter('wrist_topic', '/stem_detector/grasp')
+        self.declare_parameter('wrist_timeout', 10.0)
+        self.declare_parameter('max_correction', 0.04)    # ignore larger [m]
         if self.get_parameter('approach').value not in ('lin', 'joint'):
             raise ValueError('approach must be lin or joint')
         self.move = ActionClient(self, MoveGroup, 'move_action')
@@ -177,6 +207,10 @@ class HarvestDemo(Node):
         self.create_subscription(JointState, 'joint_states', self.on_joints, 10)
         self.detections = None
         self.unripe = None
+        self.wrist = None
+        if self.get_parameter('use_wrist_camera').value:
+            self.create_subscription(PoseStamped, self.get_parameter('wrist_topic').value,
+                                     self.on_wrist, 1)
         self.fruit_ids = []       # fruit spheres currently in the planning scene
         if self.get_parameter('use_camera').value:
             self.create_subscription(PoseArray, self.get_parameter('detection_topic').value,
@@ -189,6 +223,9 @@ class HarvestDemo(Node):
 
     def on_unripe(self, msg):
         self.unripe = msg
+
+    def on_wrist(self, msg):
+        self.wrist = msg
 
     def on_gz_pose(self, model, msg):
         p = msg.pose.position
@@ -239,7 +276,7 @@ class HarvestDemo(Node):
                                           for name, xyz in fruits]
         self.apply(scene)
 
-    def attach_fruit(self, name):
+    def attach_fruit(self, name, offset):
         """Move the fruit sphere from the world to the tool (it hangs below).
 
         Attaching an object with the id of a world object takes that object
@@ -248,7 +285,7 @@ class HarvestDemo(Node):
         scene = PlanningScene(is_diff=True)
         scene.robot_state.is_diff = True
         held = AttachedCollisionObject(link_name=TIP, touch_links=HAND_LINKS)
-        held.object = sphere(name, (GRASP_ABOVE, 0.0, 0.0), FRUIT_RADIUS, frame=TIP)
+        held.object = sphere(name, offset, FRUIT_RADIUS, frame=TIP)
         scene.robot_state.attached_collision_objects.append(held)
         self.apply(scene)
         self.fruit_ids.remove(name)
@@ -454,7 +491,7 @@ class HarvestDemo(Node):
         """tool0 positions in FRAME for the given joint states."""
         return [p for p, _ in self.fk_poses(states)]
 
-    def fruit_acceleration(self, points, h=0.01):
+    def fruit_acceleration(self, points, offset, h=0.01):
         """Peak |a| and peak |a - g| [m/s²] of a held fruit's center.
 
         For each trajectory point the joints are moved along the local
@@ -470,7 +507,7 @@ class HarvestDemo(Node):
                       for t in (-h, 0.0, h)]
             centers = []
             for p, o in self.fk_poses(states):
-                off = quat_apply(o, (GRASP_ABOVE, 0.0, 0.0))
+                off = quat_apply(o, offset)
                 centers.append([pi + oi for pi, oi in zip(p, off)])
             acc = [(centers[0][i] + centers[2][i] - 2 * centers[1][i]) / (h * h)
                    for i in range(3)]
@@ -566,15 +603,16 @@ class HarvestDemo(Node):
 
     # ----- main sequence -----
     def step(self, cycle, name, joints=None, target_xyz=None, line=None, final_approach=False,
-             carrying=False):
+             carrying=None):
         """Plan and run one move: a joint goal (OMPL), or with line=(a, b) a
         Pilz LIN move of tool0 from a to b.
 
         final_approach: also report how far the tool strayed from the +x
         approach axis through target_xyz during the last PRE_APPROACH of
         travel, to compare with the LIN approach.
-        carrying: a fruit hangs from the fingers; report its peak
-        acceleration and the finger force needed to hold it by friction.
+        carrying: offset of a held fruit's center in the tool frame; report
+        its peak acceleration and the finger force needed to hold it by
+        friction.
         """
         goal = self.pose_goal(line[1]) if line else self.joint_goal(joints)
         # The controller can still be starting on the first move, so retry.
@@ -623,8 +661,8 @@ class HarvestDemo(Node):
                         if math.dist(p, target_xyz) <= PRE_APPROACH]
                 text += (f'last {100 * PRE_APPROACH:.0f} cm off the approach axis '
                          f'{self.off_line_mm(near, axis_end, target_xyz):.1f} mm, ')
-        if carrying:
-            peak_a, peak_ag = self.fruit_acceleration(points)
+        if carrying is not None:
+            peak_a, peak_ag = self.fruit_acceleration(points, carrying)
             force = FRUIT_MASS * peak_ag / (2 * FRICTION)
             text += (f'fruit peak acceleration {peak_a:.2f} m/s² '
                      f'(with gravity {peak_ag:.2f} m/s²: {force:.2f} N per finger '
@@ -639,16 +677,50 @@ class HarvestDemo(Node):
             return False
         return True
 
-    def check_held(self, cycle, model):
-        """Log how far the Gazebo fruit is from where the hand should hold it."""
+    def fruit_offset(self, model):
+        """Gazebo fruit center in the tool frame, or straight below by default."""
+        pose, fruit = self.tool_pose(), self.gz_pose(model)
+        if pose is None or fruit is None:
+            return (GRASP_ABOVE, 0.0, 0.0)
+        p, o = pose
+        return quat_apply(quat_conj(o), [fi - pi for fi, pi in zip(fruit, p)])
+
+    def check_held(self, cycle, model, offset):
+        """Log how far the Gazebo fruit is from where the hand holds it."""
         pose, fruit = self.tool_pose(), self.gz_pose(model)
         if pose is None or fruit is None:
             self.get_logger().warn(f'[{cycle}] {model}: no pose to check the hold')
             return
         p, o = pose
-        expected = [pi + oi for pi, oi in zip(p, quat_apply(o, (GRASP_ABOVE, 0.0, 0.0)))]
+        expected = [pi + oi for pi, oi in zip(p, quat_apply(o, offset))]
         self.get_logger().info(f'[{cycle}] {model} held: center {1000 * math.dist(fruit, expected):.1f}'
-                               ' mm from where the hand should hold it')
+                               ' mm from where it was at the grasp')
+
+    def wrist_correction(self, cycle, model, stem):
+        """Stem grasp point seen by the wrist camera, or stem if none."""
+        since = self.get_clock().now()
+        timeout = self.get_parameter('wrist_timeout').value
+        msg = self.wait_detection('wrist', since, timeout)
+        if msg is None:
+            self.get_logger().warn(f'[{cycle}] {model}: wrist camera saw no stem within '
+                                   f'{timeout:.0f} s; assuming it goes straight up')
+            return stem
+        p, o = msg.pose.position, msg.pose.orientation
+        seen = (p.x, p.y, p.z)
+        up = quat_apply((o.x, o.y, o.z, o.w), (0.0, 0.0, 1.0))
+        tilt = math.degrees(math.acos(max(-1.0, min(1.0, up[2]))))
+        shift = math.dist(seen, stem)
+        text = (f'[{cycle}] {model} wrist camera: stem at ' + ' '.join(f'{v:+.3f}' for v in seen)
+                + f', tilt {tilt:.0f}°, {1000 * shift:.1f} mm from the straight-up guess')
+        if model in STEMS:
+            a, d = STEMS[model]
+            text += (f'; off the true stem: guess {point_line_mm(stem, a, d):.1f} mm, '
+                     f'wrist camera {point_line_mm(seen, a, d):.1f} mm')
+        self.get_logger().info(text)
+        if shift > self.get_parameter('max_correction').value:
+            self.get_logger().warn(f'[{cycle}] {model}: correction too large, not used')
+            return stem
+        return seen
 
     def check_in_crate(self, cycle, model):
         self.sleep(1.5)       # let it fall and settle
@@ -665,12 +737,28 @@ class HarvestDemo(Node):
     def harvest(self, cycle, model, first, stem, joints, drop_joints, lin):
         """Approach the stem, grasp, cut, carry to the crate and release."""
         if lin:
-            if not (self.step(cycle, f'{model} pre-approach', joints, first)
-                    and self.step(cycle, f'{model} LIN approach', target_xyz=stem,
-                                  line=(first, stem))):
+            if not self.step(cycle, f'{model} pre-approach', joints, first):
+                return False
+            if self.get_parameter('use_wrist_camera').value:
+                seen = self.wrist_correction(cycle, model, stem)
+                if seen != stem:
+                    # Move sideways in front of the seen stem, then go in
+                    # straight along +x as before.
+                    aligned = (seen[0] - PRE_APPROACH, seen[1], seen[2])
+                    if not self.step(cycle, f'{model} LIN align', target_xyz=aligned,
+                                     line=(first, aligned)):
+                        return False
+                    first, stem = aligned, seen
+            if not self.step(cycle, f'{model} LIN approach', target_xyz=stem,
+                             line=(first, stem)):
                 return False
         elif not self.step(cycle, model, joints, stem, final_approach=True):
             return False
+        pose = self.tool_pose()
+        if model in STEMS and pose is not None:
+            a, d = STEMS[model]
+            self.get_logger().info(f'[{cycle}] {model}: finger center '
+                                   f'{point_line_mm(pose[0], a, d):.1f} mm from the true stem')
         # Grasp the stem, then cut above the fingers. In Gazebo the hand
         # joint holds the fruit and detaching the stem joint is the cut.
         self.set_hand(FINGERS_CLOSED, CUTTER_OPEN)
@@ -678,21 +766,22 @@ class HarvestDemo(Node):
         self.set_hand(FINGERS_CLOSED, CUTTER_CLOSED, 0.5)
         self.gz_send(model, 'stem', 'detach')
         self.set_hand(FINGERS_CLOSED, CUTTER_OPEN, 0.5)
-        self.attach_fruit(model)
+        offset = self.fruit_offset(model)
+        self.attach_fruit(model, offset)
         self.get_logger().info(f'[{cycle}] {model}: stem grasped and cut')
         back = (stem[0] - PRE_APPROACH, stem[1], stem[2])
         if lin:
             ok = self.step(cycle, f'{model} LIN retreat', target_xyz=back,
-                           line=(stem, back), carrying=True)
+                           line=(stem, back), carrying=offset)
         else:
             ok = self.step(cycle, f'{model} retreat', self.solve_ik(back) or joints, back,
-                           carrying=True)
+                           carrying=offset)
         if not ok:
             return False
-        self.check_held(cycle, model)
-        if not self.step(cycle, f'{model} to crate', drop_joints, DROP_XYZ, carrying=True):
+        self.check_held(cycle, model, offset)
+        if not self.step(cycle, f'{model} to crate', drop_joints, DROP_XYZ, carrying=offset):
             return False
-        self.check_held(cycle, model)
+        self.check_held(cycle, model, offset)
         self.set_hand(FINGERS_OPEN, CUTTER_OPEN)
         self.gz_send(model, 'hand', 'detach')
         self.drop_fruit(model)

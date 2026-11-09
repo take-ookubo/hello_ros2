@@ -48,6 +48,9 @@
   <xacro:property name="finger_t" value="0.006"/>
   <xacro:property name="finger_open" value="0.03"/>     <!-- half gap when open -->
   <xacro:property name="cut_above" value="0.015"/>      <!-- blade above the finger center -->
+  <xacro:property name="wrist_cam_x" value="-0.0575"/>  <!-- on the palm top (-x is up) -->
+  <xacro:property name="wrist_cam_z" value="0.075"/>
+  <xacro:property name="wrist_cam_pitch" value="${15 * pi / 180}"/>
 
   <!-- ===== Inertia helpers ===== -->
   <!-- Solid cylinder along z, centered at (0 0 cz). -->
@@ -236,6 +239,14 @@
         <origin xyz="0 0 ${flange / 2}"/>
         <geometry><cylinder radius="0.03" length="${flange}"/></geometry>
       </visual>
+      <visual name="wrist_camera">
+        <origin xyz="${wrist_cam_x} 0 ${wrist_cam_z}"/>
+        <geometry><box size="0.025 0.06 0.025"/></geometry>
+      </visual>
+      <collision name="wrist_camera">
+        <origin xyz="${wrist_cam_x} 0 ${wrist_cam_z}"/>
+        <geometry><box size="0.025 0.06 0.025"/></geometry>
+      </collision>
       <visual name="palm">
         <origin xyz="${palm_x} 0 ${flange + palm_len / 2}"/>
         <geometry><box size="0.06 0.09 ${palm_len}"/></geometry>
@@ -277,6 +288,38 @@
     </joint>
     <xacro:box_link name="cutter" m="${m_blade}" x="0.002" y="0.03" z="0.03"/>
     <xacro:color link="cutter" rgb="0.75 0.75 0.8"/>
+
+    <!-- Wrist RGB-D camera on top of the palm, looking forward along the
+         tool axis and 15 degrees down toward the fingers, to see the stem
+         from close by before the grasp. Its body is part of link6 (palm
+         mass includes it); these links only carry the frames. -->
+    <joint name="wrist_camera_joint" type="fixed">
+      <parent link="link6"/>
+      <child link="wrist_camera_link"/>
+      <!-- Camera +x (view) = tool +z, camera +z = tool -x, then 15° down. -->
+      <origin xyz="${wrist_cam_x} 0 ${wrist_cam_z}" rpy="0 ${-pi / 2 + wrist_cam_pitch} 0"/>
+    </joint>
+    <link name="wrist_camera_link"/>
+    <joint name="wrist_camera_optical_joint" type="fixed">
+      <parent link="wrist_camera_link"/>
+      <child link="wrist_camera_optical"/>
+      <origin rpy="${-pi / 2} 0 ${-pi / 2}"/>
+    </joint>
+    <link name="wrist_camera_optical"/>
+    <gazebo reference="wrist_camera_link">
+      <sensor name="wrist_rgbd" type="rgbd_camera">
+        <topic>wrist_camera</topic>
+        <gz_frame_id>wrist_camera_optical</gz_frame_id>
+        <update_rate>5</update_rate>
+        <always_on>true</always_on>
+        <camera>
+          <horizontal_fov>1.2</horizontal_fov>
+          <image><width>320</width><height>240</height><format>R8G8B8</format></image>
+          <clip><near>0.03</near><far>1.0</far></clip>
+          <depth_camera><clip><near>0.03</near><far>1.0</far></clip></depth_camera>
+        </camera>
+      </sensor>
+    </gazebo>
   </xacro:if>
 
   <xacro:unless value="${hand}">

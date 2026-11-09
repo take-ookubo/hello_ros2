@@ -102,6 +102,7 @@ def generate_launch_description():
             'cycles': LaunchConfiguration('cycles'),
             'use_camera': LaunchConfiguration('camera'),
             'approach': LaunchConfiguration('approach'),
+            'use_wrist_camera': LaunchConfiguration('wrist_camera'),
         }],
         output='screen',
     )
@@ -146,6 +147,28 @@ def generate_launch_description():
         condition=camera,
     )
 
+    # Wrist camera on the hand: images to ROS and the stem detector.
+    wrist = IfCondition(LaunchConfiguration('wrist_camera'))
+    wrist_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=[
+            '/wrist_camera/image@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/wrist_camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/wrist_camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+        condition=wrist,
+    )
+    stem_detector = Node(
+        package='agri_perception',
+        executable='stem_detector',
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+        condition=wrist,
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument('headless', default_value='false',
                               description='Run Gazebo without the GUI'),
@@ -165,8 +188,13 @@ def generate_launch_description():
         DeclareLaunchArgument('camera', default_value='true',
                               description='Find the fruit with the field camera '
                               '(false: use the fixed positions)'),
+        DeclareLaunchArgument('wrist_camera', default_value='true',
+                              description='Correct the grasp point from the wrist camera '
+                              '(false: assume the stem goes straight up)'),
         gazebo,
         sim_bridge,
+        wrist_bridge,
+        stem_detector,
         camera_bridge,
         camera_tf,
         optical_tf,

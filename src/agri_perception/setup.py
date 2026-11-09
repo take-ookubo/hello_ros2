@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'fruit_detector = agri_perception.fruit_detector:main',
+            'stem_detector = agri_perception.stem_detector:main',
         ],
     },
 )
