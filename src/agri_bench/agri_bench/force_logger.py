@@ -5,8 +5,11 @@ board when port is empty, so the whole chain can be tried without
 hardware. See docs/stem_force_test_plan.md for the tests.
 
 Topics (std_msgs/Float64, one per channel): ~/<channel>, in N (force
-channels, after tare) or mm (position). ~/raw (Float64MultiArray) has the
-raw counts in channel order, for calibrate.
+channels, after tare) or mm (position, stage). ~/raw (Float64MultiArray)
+has the raw counts in channel order, for calibrate. ~/board_message
+(String) repeats the board's comment lines, among them the stage's
+replies; ~/stage_command (String, subscribed) is sent to the board as a
+stage command (see stage.py, and the stage command line tool).
 
 Services (std_srvs/Trigger):
 - ~/tare: zero the force channels at their mean over the last tare_seconds.
@@ -24,10 +27,11 @@ import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
-from std_msgs.msg import Float64, Float64MultiArray
+from std_msgs.msg import Float64, Float64MultiArray, String
 from std_srvs.srv import Trigger
 
-from agri_bench.protocol import POSITION, Clock, apply_calibration, parse_line, summarize
+from agri_bench.protocol import NON_FORCE, POSITION, Clock, apply_calibration, parse_line, summarize
+from agri_bench.stage import STAGE
 from agri_bench.sources import FakeSource, SerialSource
 
 
@@ -38,7 +42,7 @@ class ForceLogger(Node):
                                    'calibration_example.yaml')
         self.declare_parameter('port', '')           # '' = fake board
         self.declare_parameter('baud', 115200)
-        self.declare_parameter('channels', ['cut', 'grip_left', 'grip_right', POSITION])
+        self.declare_parameter('channels', ['cut', 'grip_left', 'grip_right', POSITION, STAGE])
         self.declare_parameter('calibration_file', default_cal)
         self.declare_parameter('main_channel', 'cut')
         self.declare_parameter('threshold', 0.2)     # loaded above this [N]
@@ -73,6 +77,8 @@ class ForceLogger(Node):
 
         self.pubs = {n: self.create_publisher(Float64, f'~/{n}', 10) for n in self.names}
         self.raw_pub = self.create_publisher(Float64MultiArray, '~/raw', 10)
+        self.message_pub = self.create_publisher(String, '~/board_message', 50)
+        self.create_subscription(String, '~/stage_command', self.on_stage_command, 10)
         self.create_service(Trigger, '~/tare', self.on_tare)
         self.create_service(Trigger, '~/start', self.on_start)
         self.create_service(Trigger, '~/stop', self.on_stop)
@@ -92,6 +98,7 @@ class ForceLogger(Node):
             if not line:
                 continue
             if line.startswith('#'):
+                self.message_pub.publish(String(data=line.strip()))
                 text = f'board: {line.strip()}'
                 if 'error' in line:
                     self.get_logger().error(text, throttle_duration_sec=5.0)
@@ -128,6 +135,16 @@ class ForceLogger(Node):
             for n, v in zip(self.names, values):
                 self.pubs[n].publish(Float64(data=v))
 
+    def on_stage_command(self, msg):
+        line = msg.data.strip()
+        if not line:
+            return
+        self.get_logger().info(f'stage command: {line}')
+        try:
+            self.source.write(line)
+        except Exception as exc:  # noqa: BLE001 - serial raises several types
+            self.get_logger().error(f'could not send {line!r}: {exc}')
+
     def check_rate(self):
         if self.last_time is None or (self.get_clock().now() - self.last_time).nanoseconds > 1e9:
             self.get_logger().warn('no data from the board for 1 s', throttle_duration_sec=10.0)
@@ -137,7 +154,7 @@ class ForceLogger(Node):
             response.success, response.message = False, 'no data yet'
             return response
         for i, n in enumerate(self.names):
-            if n == POSITION:
+            if n in NON_FORCE:
                 continue
             mean = sum(v[i] for _, v in self.recent) / len(self.recent)
             self.tare[n] += mean
@@ -147,7 +164,7 @@ class ForceLogger(Node):
                 v[i] -= mean
         response.success = True
         response.message = json.dumps({n: round(v, 4) for n, v in self.tare.items()
-                                       if n != POSITION})
+                                       if n not in NON_FORCE})
         self.get_logger().info(f'tare: {response.message}')
         return response
 

@@ -47,7 +47,7 @@ def test_apply_calibration_leaves_unknown_raw():
 
 def test_summary_of_fake_cut():
     peak = 30.0
-    source = FakeSource(NAMES, peak_n=peak, noise_n=0.0, realtime=False)
+    source = FakeSource(NAMES, rate_hz=80.0, peak_n=peak, noise_n=0.0, realtime=False)
     clock = Clock()
     times, values = [], []
     for _ in range(int(8.0 * 80)):          # one 8 s cycle

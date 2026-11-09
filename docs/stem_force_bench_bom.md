@@ -30,7 +30,7 @@
 | [SC133-2kg](https://akizukidenshi.com/catalog/g/g113041/)（秋月） | 3 | 780 | 2,340 | 把持用 2 個と予備 1 個。定格約 20 N（指 1 本あたり 0〜20 N） |
 | [SparkFun Qwiic Scale NAU7802 SEN-15242](https://www.digikey.jp/en/products/detail/sparkfun-electronics/15242/10064419)（DigiKey） | 4 | 3,331 | 13,324 | ロードセル用 ADC。3 個と予備 1 個。[SparkFun 直販](https://www.sparkfun.com/sparkfun-qwiic-scale-nau7802.html)は $5.95（約 893円）だが送料が別 |
 | [Adafruit PCA9548 8ch Mux ADA-5626](https://www.switch-science.com/products/8587)（スイッチサイエンス） | 1 | 1,485 | 1,485 | NAU7802 は 3 枚とも同じアドレスなので、I2C を分ける。TCA9548A 互換でアドレス 0x70、ファームウェアはそのまま使える |
-| [Raspberry Pi Pico 2](https://www.switch-science.com/catalog/9809/)（スイッチサイエンス） | 2 | 1,100〜1,320 | 2,200〜2,640 | 1 個は記録用、1 個は直動軸の駆動用。ピンヘッダ付き（Pico 2 H）は 1,320円 |
+| [Raspberry Pi Pico 2](https://www.switch-science.com/catalog/9809/)（スイッチサイエンス） | 2 | 1,100〜1,320 | 2,200〜2,640 | 1 個で記録と直動軸の駆動を両方行う（2 つのコアを使い分ける）。もう 1 個は予備。ピンヘッダ付き（Pico 2 H）は 1,320円 |
 | Qwiic / STEMMA QT ケーブル、Pico 側のピン変換ケーブル | 一式 | — | 1,500〜3,000 | 予算枠。Pico 2 には Qwiic コネクタがない |
 | スライドボリューム 60 mm、B 特性（例：[Bourns PTA6043 系](https://jp.rs-online.com/web/p/potentiometers/1674755)） | 1 | — | 300〜600 | 刃を押す移動量を測る（`position` チャンネル）。A 特性（オーディオ用）は非線形なので選ばない |
 | ブレッドボード、ジャンパ線、USB ケーブル | 一式 | — | 1,000〜2,000 | 予算枠 |
@@ -48,7 +48,7 @@ HX711 の基板（[SparkFun SEN-13879](https://www.sparkfun.com/sparkfun-load-ce
 | ボールねじの直動モジュール（リード 10 mm の SFU1210 を推奨、NEMA17 ステッピングモーター付き、ストローク 100〜150 mm） | 1 | 15,000〜30,000 | 予算枠。海外の掲載例（どちらもリード 4 mm の SFU1204）は [150 mm で $103.99](https://vxb.com/products/150mm-length-travel-linear-stage-actuator-square-l)、[100 mm で約 $159](https://www.fruugo.us/1204-ball-screw-linear-slide-stage-with-stepper-100mm/p-397407462)（約 1.6万〜2.4万円、送料別）。国内で買える型番は未選定 |
 | [Adafruit TMC2209 ドライバ](https://www.switch-science.com/products/10203)（スイッチサイエンス） | 1 | 1,870 | 5〜29 V、最大 2 A。静かで、低速でも滑らかに動かせる |
 | 24 V の AC アダプタ（2.5 A 前後） | 1 | 3,000〜5,000 | 予算枠 |
-| 非常停止スイッチ（モーター電源を切る）、リミットスイッチ 2 個 | 一式 | 2,500〜5,000 | 予算枠。試験計画第8節の安全対策 |
+| 非常停止スイッチ（モーター電源を切る）、常閉のリミットスイッチ 2 個、モーター電源の検知用の抵抗 2 本 | 一式 | 2,500〜5,000 | 予算枠。試験計画第8節の安全対策 |
 | **小計** | | **約 2.2万〜4.2万** | |
 
 速さと力の確認（購入前にモジュールのモーター特性で確かめる）：
@@ -66,7 +66,7 @@ HX711 の基板（[SparkFun SEN-13879](https://www.sparkfun.com/sparkfun-load-ce
   - 刃先の最大の力は記録の r 倍、刃の移動量は記録の 1/r 倍に直す。
   - 仕事（力 × 移動量）は、支点の摩擦を除けば直さなくてよい。
   - r は、治具を作った後に分銅で確かめる（第2.3節）。
-- 直動軸を動かすソフト（Pico で一定の速さのパルスを出す）は、まだ作っていない。`agri_bench` は記録だけを行う。
+- 直動軸の駆動は `agri_bench` のファームウェアと `stage` コマンドで行う（README の「agri_bench」）。加速度は 1000 mm/s² で、150 mm/s に達するまでに 11.25 mm 要る。ストローク 100 mm の中で、刃が果柄に当たる位置の手前にこの距離をとる。
 
 ### 2.3 刃と治具
 
@@ -183,4 +183,3 @@ HX711 の基板（[SparkFun SEN-13879](https://www.sparkfun.com/sparkfun-load-ce
 - 直動モジュールの型番と国内価格、モーターのトルク–回転数特性
 - 3D プリンターを使えるかどうか（使えないなら外注で上限側）
 - ARS 300L の持ち手を押す点と刃の当たる点の距離の比 r。直動軸の速さ（第2.2節）と、記録から刃先の力・移動量への換算に使う。治具を作った後に分銅で確かめる
-- 直動軸の駆動ソフト（Pico 2 で一定の速さのパルスを出し、`agri_bench` の記録と時刻を合わせる）

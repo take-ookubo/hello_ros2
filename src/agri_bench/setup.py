@@ -25,6 +25,7 @@ setup(
             'force_logger = agri_bench.force_logger:main',
             'trial = agri_bench.trial:main',
             'calibrate = agri_bench.calibrate:main',
+            'stage = agri_bench.stage_cli:main',
         ],
     },
 )

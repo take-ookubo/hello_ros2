@@ -9,12 +9,15 @@ starting with '#' are comments (header, errors). time_us is the board's
 microsecond counter, a 32-bit value that wraps after about 71 minutes.
 
 Each channel is turned into a physical value as (raw - offset) * scale:
-force channels in N and the optional 'position' channel (blade or finger
-travel from a linear potentiometer) in mm.
+force channels in N, and in mm the optional 'position' channel (travel
+from a linear potentiometer) and 'stage' channel (the linear stage's
+motor steps, see stage.py).
 """
 import math
 
 POSITION = 'position'
+STAGE = 'stage'
+NON_FORCE = (POSITION, STAGE)   # channels in mm, not N; never tared
 WRAP = 2 ** 32
 
 
@@ -87,8 +90,9 @@ def summarize(times, values, names, main, threshold):
     channel (the one being cut or pulled): its peak again as main_peak_n,
     and the loaded part of the trial,
     from where it first exceeds threshold to where it last does, with its
-    duration and, if there is a position channel, the travel and the work
-    (integral of force over travel, in mJ = N*mm).
+    duration and, if there is a position channel (else the stage
+    channel), the travel and the work (integral of force over travel, in
+    mJ = N*mm).
     """
     if not times:
         return {'samples': 0}
@@ -96,7 +100,7 @@ def summarize(times, values, names, main, threshold):
     if len(times) > 1:
         summary['rate_hz'] = round((len(times) - 1) / (times[-1] - times[0]), 1)
     for i, name in enumerate(names):
-        if name == POSITION:
+        if name in NON_FORCE:
             continue
         col = [v[i] for v in values]
         summary[f'{name}_peak_n'] = round(max(col), 3)
@@ -111,8 +115,10 @@ def summarize(times, values, names, main, threshold):
         return summary
     a, b = loaded[0], loaded[-1]
     summary['loaded_s'] = round(times[b] - times[a], 3)
-    if POSITION in names:
-        p = names.index(POSITION)
+    travel = next((n for n in (POSITION, STAGE) if n in names), None)
+    if travel is not None:
+        p = names.index(travel)
+        summary['travel_channel'] = travel
         summary['travel_mm'] = round(values[b][p] - values[a][p], 3)
         work = 0.0
         for k in range(a, b):

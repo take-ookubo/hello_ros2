@@ -20,7 +20,7 @@ import yaml
 from rclpy.node import Node
 from std_msgs.msg import Float64MultiArray
 
-from agri_bench.protocol import POSITION, fit_line
+from agri_bench.protocol import POSITION, STAGE, fit_line
 
 G = 9.80665
 
@@ -42,7 +42,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--channel', required=True)
     ap.add_argument('--channels', nargs='+',
-                    default=['cut', 'grip_left', 'grip_right', POSITION],
+                    default=['cut', 'grip_left', 'grip_right', POSITION, STAGE],
                     help="force_logger's channels parameter, in order")
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument('--masses', type=float, nargs='+', help='[kg]')
