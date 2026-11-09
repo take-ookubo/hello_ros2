@@ -63,7 +63,8 @@ def load_model(payload):
     share = get_package_share_directory('agri_arm')
     urdf = xacro.process_file(
         os.path.join(share, 'urdf', 'agri_arm.urdf.xacro'),
-        mappings={'payload': str(float(payload))}).toxml()
+        # The lumped hand (same mass), so the model has only the arm joints.
+        mappings={'payload': str(float(payload)), 'hand': 'false'}).toxml()
     # Keep the URDF inertias as they are and merge fixed links.
     urdf = urdf.replace('</robot>', '<mujoco><compiler discardvisual="true" '
                         'fusestatic="true" balanceinertia="false"/></mujoco></robot>')

@@ -12,6 +12,9 @@ controller_manager:
     arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
+    hand_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
 arm_controller:
   ros__parameters:
     joints: [joint1, joint2, joint3, joint4, joint5, joint6]
@@ -40,3 +43,14 @@ arm_controller:
       joint4: {p: 30.0, i: 40.0, d: 0.15, i_clamp_max: 1.0, i_clamp_min: -1.0, u_clamp_max: 6.0, u_clamp_min: -6.0}
       joint5: {p: 60.0, i: 60.0, d: 1.5, i_clamp_max: 3.0, i_clamp_min: -3.0, u_clamp_max: 6.0, u_clamp_min: -6.0}
       joint6: {p: 8.0, i: 20.0, d: 0.04, i_clamp_max: 0.5, i_clamp_min: -0.5, u_clamp_max: 2.5, u_clamp_min: -2.5}
+
+# Fingers and blade (position servos in both control modes).
+hand_controller:
+  ros__parameters:
+    joints: [finger_left_joint, finger_right_joint, cutter_joint]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.02
+      goal_time: 1.0

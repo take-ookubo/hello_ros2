@@ -28,7 +28,9 @@ def generate_launch_description():
         robot_description = xacro.process_file(
             os.path.join(share, 'urdf', 'agri_arm.urdf.xacro'),
             mappings={'payload': payload, 'control_mode': mode,
-                      'controllers': controllers}).toxml()
+                      'controllers': controllers,
+                      'grasp_objects': LaunchConfiguration('grasp_objects').perform(context),
+                      }).toxml()
         return [
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_sim_launch),
@@ -88,10 +90,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'payload', default_value='0.0',
             description='Extra mass [kg] at the tool tip, such as a fruit'),
+        DeclareLaunchArgument(
+            'grasp_objects', default_value='',
+            description='Gazebo models the hand can hold (space separated); '
+            'see agri_arm.urdf.xacro'),
         OpaqueFunction(function=gazebo_and_model),
         spawn,
         clock_bridge,
         spawner('joint_state_broadcaster'),
         spawner('arm_controller'),
+        spawner('hand_controller'),
         pose_cycle,
     ])

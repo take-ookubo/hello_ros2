@@ -42,4 +42,20 @@
   <disable_collisions link1="link4" link2="link5" reason="Adjacent"/>
   <disable_collisions link1="link4" link2="link6" reason="Never"/>
   <disable_collisions link1="link5" link2="link6" reason="Adjacent"/>
+  <!-- Hand links (hand:=true). -->
+  <disable_collisions link1="cutter" link2="finger_left" reason="Never"/>
+  <disable_collisions link1="cutter" link2="finger_right" reason="Never"/>
+  <disable_collisions link1="cutter" link2="link3" reason="Never"/>
+  <disable_collisions link1="cutter" link2="link4" reason="Never"/>
+  <disable_collisions link1="cutter" link2="link5" reason="Never"/>
+  <disable_collisions link1="cutter" link2="link6" reason="Adjacent"/>
+  <disable_collisions link1="finger_left" link2="finger_right" reason="Never"/>
+  <disable_collisions link1="finger_left" link2="link3" reason="Never"/>
+  <disable_collisions link1="finger_left" link2="link4" reason="Never"/>
+  <disable_collisions link1="finger_left" link2="link5" reason="Never"/>
+  <disable_collisions link1="finger_left" link2="link6" reason="Adjacent"/>
+  <disable_collisions link1="finger_right" link2="link3" reason="Never"/>
+  <disable_collisions link1="finger_right" link2="link4" reason="Never"/>
+  <disable_collisions link1="finger_right" link2="link5" reason="Never"/>
+  <disable_collisions link1="finger_right" link2="link6" reason="Adjacent"/>
 </robot>

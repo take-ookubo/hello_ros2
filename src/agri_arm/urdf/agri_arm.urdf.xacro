@@ -3,7 +3,8 @@
      Joint modules: RMD-X6 (base yaw, elbow), RMD-X8 (shoulder),
      DYNAMIXEL XM540 x2 and XM430 x1 (wrist). Masses and lengths are first
      estimates for simulation; update them from the CAD model and real parts.
-     The hand, cutter and camera are one lumped mass on the tool flange. -->
+     The hand is a two-finger gripper with a sliding blade (hand:=true),
+     or one lumped mass on the tool flange (hand:=false). -->
 <robot name="agri_arm" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:arg name="controllers" default="$(find agri_arm)/config/controllers.yaml"/>
@@ -13,6 +14,14 @@
   <xacro:arg name="control_mode" default="position"/>
   <!-- Extra mass [kg] held at tool0, such as a fruit and cables. -->
   <xacro:arg name="payload" default="0.0"/>
+  <!-- true: fingers and blade as moving joints. false: one lumped tool of
+       the same mass, for tools that expect only the six arm joints. -->
+  <xacro:arg name="hand" default="true"/>
+  <!-- Gazebo model names (space separated) the hand can hold. Each gets a
+       detachable joint from link6 with topics /<name>/hand/attach and
+       /<name>/hand/detach. Gazebo attaches these joints as soon as the arm
+       is spawned, so the user must send detach before moving the arm. -->
+  <xacro:arg name="grasp_objects" default=""/>
 
   <!-- ===== Dimensions [m] and masses [kg] ===== -->
   <xacro:property name="base_height" value="0.12"/>
@@ -28,6 +37,17 @@
   <xacro:property name="m_xm540" value="0.165"/>
   <xacro:property name="m_xm430" value="0.082"/>
   <xacro:property name="m_tool" value="0.65"/>          <!-- hand + cutter + camera estimate -->
+  <xacro:property name="hand" value="$(arg hand)"/>
+  <!-- Hand (hand:=true): masses add up to m_tool. -->
+  <xacro:property name="m_finger" value="0.03"/>
+  <xacro:property name="m_blade" value="0.04"/>
+  <xacro:property name="m_palm" value="${m_tool - 2 * m_finger - m_blade}"/>
+  <xacro:property name="palm_len" value="0.06"/>        <!-- along the tool axis -->
+  <xacro:property name="palm_x" value="-0.015"/>        <!-- palm sits above the fruit -->
+  <xacro:property name="finger_len" value="0.05"/>
+  <xacro:property name="finger_t" value="0.006"/>
+  <xacro:property name="finger_open" value="0.03"/>     <!-- half gap when open -->
+  <xacro:property name="cut_above" value="0.015"/>      <!-- blade above the finger center -->
 
   <!-- ===== Inertia helpers ===== -->
   <!-- Solid cylinder along z, centered at (0 0 cz). -->
@@ -186,31 +206,107 @@
   <xacro:arm_joint name="joint6" parent="link5" child="link6" xyz="0 0 ${wrist_roll}"
                    axis="0 0 1" lower="-3.14" upper="3.14" effort="2.5" velocity="4.0"/>
 
-  <!-- Tool flange plus a lumped hand, cutter and camera (0.65 kg, 0.1 m long). -->
-  <link name="link6">
-    <visual>
-      <origin xyz="0 0 ${flange / 2}"/>
-      <geometry><cylinder radius="0.03" length="${flange}"/></geometry>
-    </visual>
-    <visual name="tool">
-      <origin xyz="0 0 ${flange + 0.05}"/>
-      <geometry><box size="0.08 0.06 0.10"/></geometry>
-    </visual>
-    <collision>
-      <origin xyz="0 0 ${flange + 0.05}"/>
-      <geometry><box size="0.08 0.06 0.10"/></geometry>
-    </collision>
+  <!-- Box inertia about its center. -->
+  <xacro:macro name="box_inertial" params="m x y z xyz">
     <inertial>
-      <origin xyz="0 0 ${flange + 0.05}"/>
-      <mass value="${m_tool}"/>
-      <inertia ixx="${m_tool * (0.06 * 0.06 + 0.1 * 0.1) / 12}" ixy="0" ixz="0"
-               iyy="${m_tool * (0.08 * 0.08 + 0.1 * 0.1) / 12}" iyz="0"
-               izz="${m_tool * (0.08 * 0.08 + 0.06 * 0.06) / 12}"/>
+      <origin xyz="${xyz}"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m * (y * y + z * z) / 12}" ixy="0" ixz="0"
+               iyy="${m * (x * x + z * z) / 12}" iyz="0" izz="${m * (x * x + y * y) / 12}"/>
     </inertial>
-  </link>
-  <xacro:color link="link6" rgb="0.9 0.5 0.1"/>
+  </xacro:macro>
+  <xacro:macro name="box_link" params="name m x y z xyz:='0 0 0'">
+    <link name="${name}">
+      <visual><origin xyz="${xyz}"/><geometry><box size="${x} ${y} ${z}"/></geometry></visual>
+      <collision><origin xyz="${xyz}"/><geometry><box size="${x} ${y} ${z}"/></geometry></collision>
+      <xacro:box_inertial m="${m}" x="${x}" y="${y}" z="${z}" xyz="${xyz}"/>
+    </link>
+  </xacro:macro>
 
-  <!-- Tool center point at the front of the lumped tool. -->
+  <xacro:if value="${hand}">
+    <!-- Cut-and-hold hand. Two fingers close on the fruit stem (peduncle)
+         at tool0, and a blade slides across the stem 1.5 cm above the
+         fingers, so the cut-off fruit stays held by its stem. In the tool
+         frame z points forward and -x is "up" when the tool faces the plant
+         (see harvest_demo). The palm holds the finger and blade servos
+         (DYNAMIXEL XL430 / XL330 class). Masses are estimates and add up
+         to the old lumped tool (0.65 kg). -->
+    <link name="link6">
+      <visual>
+        <origin xyz="0 0 ${flange / 2}"/>
+        <geometry><cylinder radius="0.03" length="${flange}"/></geometry>
+      </visual>
+      <visual name="palm">
+        <origin xyz="${palm_x} 0 ${flange + palm_len / 2}"/>
+        <geometry><box size="0.06 0.09 ${palm_len}"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="${palm_x} 0 ${flange + palm_len / 2}"/>
+        <geometry><box size="0.06 0.09 ${palm_len}"/></geometry>
+      </collision>
+      <xacro:box_inertial m="${m_palm}" x="0.06" y="0.09" z="${palm_len}"
+                          xyz="${palm_x} 0 ${flange + palm_len / 2}"/>
+    </link>
+    <xacro:color link="link6" rgb="0.9 0.5 0.1"/>
+
+    <!-- Finger joints: 0 = open (inner faces 3 cm from the center),
+         finger_close = closed on a stem of radius stem_radius. -->
+    <xacro:macro name="finger" params="side sign">
+      <joint name="finger_${side}_joint" type="prismatic">
+        <parent link="link6"/>
+        <child link="finger_${side}"/>
+        <origin xyz="0 ${sign * (finger_open + finger_t / 2)} ${flange + palm_len + finger_len / 2}"/>
+        <axis xyz="0 ${-sign} 0"/>
+        <limit lower="0" upper="${finger_open - 0.001}" effort="20" velocity="0.1"/>
+        <dynamics damping="1.0"/>
+      </joint>
+      <xacro:box_link name="finger_${side}" m="${m_finger}" x="0.02" y="${finger_t}" z="${finger_len}"/>
+      <xacro:color link="finger_${side}" rgb="0.25 0.25 0.25"/>
+    </xacro:macro>
+    <xacro:finger side="left" sign="1"/>
+    <xacro:finger side="right" sign="-1"/>
+
+    <!-- Blade: 0 = open beside the left finger, 0.06 = past the stem. -->
+    <joint name="cutter_joint" type="prismatic">
+      <parent link="link6"/>
+      <child link="cutter"/>
+      <origin xyz="${-cut_above} 0.045 ${flange + palm_len + finger_len - 0.015}"/>
+      <axis xyz="0 -1 0"/>
+      <limit lower="0" upper="0.06" effort="50" velocity="0.2"/>
+      <dynamics damping="1.0"/>
+    </joint>
+    <xacro:box_link name="cutter" m="${m_blade}" x="0.002" y="0.03" z="0.03"/>
+    <xacro:color link="cutter" rgb="0.75 0.75 0.8"/>
+  </xacro:if>
+
+  <xacro:unless value="${hand}">
+    <!-- Tool flange plus a lumped hand, cutter and camera (0.65 kg, 0.1 m long). -->
+    <link name="link6">
+      <visual>
+        <origin xyz="0 0 ${flange / 2}"/>
+        <geometry><cylinder radius="0.03" length="${flange}"/></geometry>
+      </visual>
+      <visual name="tool">
+        <origin xyz="0 0 ${flange + 0.05}"/>
+        <geometry><box size="0.08 0.06 0.10"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${flange + 0.05}"/>
+        <geometry><box size="0.08 0.06 0.10"/></geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 ${flange + 0.05}"/>
+        <mass value="${m_tool}"/>
+        <inertia ixx="${m_tool * (0.06 * 0.06 + 0.1 * 0.1) / 12}" ixy="0" ixz="0"
+                 iyy="${m_tool * (0.08 * 0.08 + 0.1 * 0.1) / 12}" iyz="0"
+                 izz="${m_tool * (0.08 * 0.08 + 0.06 * 0.06) / 12}"/>
+      </inertial>
+    </link>
+    <xacro:color link="link6" rgb="0.9 0.5 0.1"/>
+  </xacro:unless>
+
+  <!-- Tool center point: between the fingertips, 1 cm behind their tips
+       (with hand:=false, at the front of the lumped tool). -->
   <joint name="tool_joint" type="fixed">
     <parent link="link6"/>
     <child link="tool0"/>
@@ -256,7 +352,38 @@
     <xacro:control_joint name="joint4"/>
     <xacro:control_joint name="joint5"/>
     <xacro:control_joint name="joint6"/>
+    <!-- The hand is always position controlled (servo with its own loop). -->
+    <xacro:if value="${hand}">
+      <xacro:macro name="hand_joint" params="name">
+        <joint name="${name}">
+          <command_interface name="position"/>
+          <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+          <state_interface name="velocity"/>
+          <state_interface name="effort"/>
+        </joint>
+      </xacro:macro>
+      <xacro:hand_joint name="finger_left_joint"/>
+      <xacro:hand_joint name="finger_right_joint"/>
+      <xacro:hand_joint name="cutter_joint"/>
+    </xacro:if>
   </ros2_control>
+
+  <xacro:macro name="grasp_joints" params="names">
+    <xacro:if value="${len(names.split()) > 0}">
+      <xacro:property name="first" value="${names.split()[0]}"/>
+      <gazebo>
+        <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
+          <parent_link>link6</parent_link>
+          <child_model>${first}</child_model>
+          <child_link>link</child_link>
+          <attach_topic>/${first}/hand/attach</attach_topic>
+          <detach_topic>/${first}/hand/detach</detach_topic>
+        </plugin>
+      </gazebo>
+      <xacro:grasp_joints names="${' '.join(names.split()[1:])}"/>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:grasp_joints names="$(arg grasp_objects)"/>
 
   <gazebo>
     <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">

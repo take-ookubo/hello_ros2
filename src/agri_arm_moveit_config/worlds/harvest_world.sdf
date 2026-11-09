@@ -36,51 +36,197 @@
         </visual>
       </link>
     </model>
-    <!-- Plant support post. The same box is added to the MoveIt planning
-         scene by harvest_demo, so keep the two in sync. -->
-    <model name="post">
+    <!-- Plant: support post, a branch (truss) along y at z 0.59 and the
+         upper parts of the fruit stems. The post and branch are added to
+         the MoveIt planning scene by harvest_demo, so keep them in sync.
+         The stems are thin and flexible and are left out of the planning
+         scene. Each ripe fruit hangs from it by a detachable joint. -->
+    <model name="plant">
       <static>true</static>
-      <pose>0.42 0 0.45 0 0 0</pose>
+      <pose>0.42 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="collision">
+        <collision name="post">
+          <pose>0 0 0.45 0 0 0</pose>
           <geometry><box><size>0.04 0.04 0.9</size></box></geometry>
         </collision>
-        <visual name="visual">
+        <visual name="post">
+          <pose>0 0 0.45 0 0 0</pose>
           <geometry><box><size>0.04 0.04 0.9</size></box></geometry>
           <material><ambient>0.45 0.3 0.15 1</ambient><diffuse>0.45 0.3 0.15 1</diffuse></material>
         </visual>
+        <collision name="branch">
+          <pose>0 0 0.59 1.5707963 0 0</pose>
+          <geometry><cylinder><radius>0.01</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="branch">
+          <pose>0 0 0.59 1.5707963 0 0</pose>
+          <geometry><cylinder><radius>0.01</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.45 0.3 0.15 1</ambient><diffuse>0.45 0.3 0.15 1</diffuse></material>
+        </visual>
+        <visual name="fruit_left_stem">
+          <pose>0 0.2 0.55 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
+        <visual name="fruit_right_stem">
+          <pose>0 -0.2 0.55 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
+        <visual name="fruit_unripe_stem">
+          <pose>0 -0.08 0.55 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
+        <!-- The unripe fruit is not picked, so its whole stem is fixed. -->
+        <visual name="fruit_unripe_lower_stem">
+          <pose>0 -0.08 0.5025 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.035</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
       </link>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
+        <parent_link>link</parent_link>
+        <child_model>fruit_left</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/fruit_left/stem/attach</attach_topic>
+        <detach_topic>/fruit_left/stem/detach</detach_topic>
+      </plugin>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
+        <parent_link>link</parent_link>
+        <child_model>fruit_right</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/fruit_right/stem/attach</attach_topic>
+        <detach_topic>/fruit_right/stem/detach</detach_topic>
+      </plugin>
     </model>
-    <!-- Target fruit, visual only so the tool does not push it. -->
+    <!-- Ripe fruit (0.15 kg) with the lower part of its stem. It hangs
+         from the plant by a detachable joint (cut = detach). A second one,
+         on the arm (agri_arm.urdf.xacro, grasp_objects), holds it in the
+         hand after the cut. -->
     <model name="fruit_left">
-      <static>true</static>
       <pose>0.42 0.2 0.45 0 0 0</pose>
       <link name="link">
+        <inertial>
+          <mass>0.15</mass>
+          <inertia><ixx>7.35e-5</ixx><iyy>7.35e-5</iyy><izz>7.35e-5</izz></inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry><sphere><radius>0.035</radius></sphere></geometry>
+        </collision>
         <visual name="visual">
           <geometry><sphere><radius>0.035</radius></sphere></geometry>
           <material><ambient>0.85 0.1 0.1 1</ambient><diffuse>0.85 0.1 0.1 1</diffuse></material>
         </visual>
+        <visual name="stem">
+          <pose>0 0 0.0525 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.035</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
       </link>
+      <!-- World pose on /model/fruit_left/pose, to check where it ended up. -->
+      <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
+        <publish_link_pose>false</publish_link_pose>
+        <publish_model_pose>true</publish_model_pose>
+        <use_pose_vector_msg>false</use_pose_vector_msg>
+        <update_frequency>20</update_frequency>
+      </plugin>
     </model>
-    <!-- Target fruit, visual only so the tool does not push it. -->
+    <!-- Ripe fruit (0.15 kg) with the lower part of its stem. It hangs
+         from the plant by a detachable joint (cut = detach). A second one,
+         on the arm (agri_arm.urdf.xacro, grasp_objects), holds it in the
+         hand after the cut. -->
     <model name="fruit_right">
-      <static>true</static>
       <pose>0.42 -0.2 0.45 0 0 0</pose>
       <link name="link">
+        <inertial>
+          <mass>0.15</mass>
+          <inertia><ixx>7.35e-5</ixx><iyy>7.35e-5</iyy><izz>7.35e-5</izz></inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry><sphere><radius>0.035</radius></sphere></geometry>
+        </collision>
         <visual name="visual">
           <geometry><sphere><radius>0.035</radius></sphere></geometry>
           <material><ambient>0.85 0.1 0.1 1</ambient><diffuse>0.85 0.1 0.1 1</diffuse></material>
         </visual>
+        <visual name="stem">
+          <pose>0 0 0.0525 0 0 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.035</length></cylinder></geometry>
+          <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
+        </visual>
       </link>
+      <!-- World pose on /model/fruit_right/pose, to check where it ended up. -->
+      <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
+        <publish_link_pose>false</publish_link_pose>
+        <publish_model_pose>true</publish_model_pose>
+        <use_pose_vector_msg>false</use_pose_vector_msg>
+        <update_frequency>20</update_frequency>
+      </plugin>
     </model>
     <!-- Unripe (yellow-green) fruit: fruit_detector must not pick it. -->
     <model name="fruit_unripe">
       <static>true</static>
-      <pose>0.42 -0.08 0.62 0 0 0</pose>
+      <pose>0.42 -0.08 0.45 0 0 0</pose>
       <link name="link">
+        <collision name="collision">
+          <geometry><sphere><radius>0.035</radius></sphere></geometry>
+        </collision>
         <visual name="visual">
           <geometry><sphere><radius>0.035</radius></sphere></geometry>
           <material><ambient>0.45 0.7 0.15 1</ambient><diffuse>0.45 0.7 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Crate for the harvested fruit, on a stand. The same boxes are in
+         harvest_demo's CRATE. -->
+    <model name="crate">
+      <static>true</static>
+      <link name="link">
+        <collision name="stand">
+          <pose>0.05 0.42 0.05 0 0 0</pose>
+          <geometry><box><size>0.24 0.2 0.1</size></box></geometry>
+        </collision>
+        <visual name="stand">
+          <pose>0.05 0.42 0.05 0 0 0</pose>
+          <geometry><box><size>0.24 0.2 0.1</size></box></geometry>
+          <material><ambient>0.2 0.35 0.7 1</ambient><diffuse>0.2 0.35 0.7 1</diffuse></material>
+        </visual>
+        <collision name="wall_front">
+          <pose>0.165 0.42 0.15 0 0 0</pose>
+          <geometry><box><size>0.01 0.2 0.1</size></box></geometry>
+        </collision>
+        <visual name="wall_front">
+          <pose>0.165 0.42 0.15 0 0 0</pose>
+          <geometry><box><size>0.01 0.2 0.1</size></box></geometry>
+          <material><ambient>0.2 0.35 0.7 1</ambient><diffuse>0.2 0.35 0.7 1</diffuse></material>
+        </visual>
+        <collision name="wall_back">
+          <pose>-0.065 0.42 0.15 0 0 0</pose>
+          <geometry><box><size>0.01 0.2 0.1</size></box></geometry>
+        </collision>
+        <visual name="wall_back">
+          <pose>-0.065 0.42 0.15 0 0 0</pose>
+          <geometry><box><size>0.01 0.2 0.1</size></box></geometry>
+          <material><ambient>0.2 0.35 0.7 1</ambient><diffuse>0.2 0.35 0.7 1</diffuse></material>
+        </visual>
+        <collision name="wall_left">
+          <pose>0.05 0.515 0.15 0 0 0</pose>
+          <geometry><box><size>0.22 0.01 0.1</size></box></geometry>
+        </collision>
+        <visual name="wall_left">
+          <pose>0.05 0.515 0.15 0 0 0</pose>
+          <geometry><box><size>0.22 0.01 0.1</size></box></geometry>
+          <material><ambient>0.2 0.35 0.7 1</ambient><diffuse>0.2 0.35 0.7 1</diffuse></material>
+        </visual>
+        <collision name="wall_right">
+          <pose>0.05 0.325 0.15 0 0 0</pose>
+          <geometry><box><size>0.22 0.01 0.1</size></box></geometry>
+        </collision>
+        <visual name="wall_right">
+          <pose>0.05 0.325 0.15 0 0 0</pose>
+          <geometry><box><size>0.22 0.01 0.1</size></box></geometry>
+          <material><ambient>0.2 0.35 0.7 1</ambient><diffuse>0.2 0.35 0.7 1</diffuse></material>
         </visual>
       </link>
     </model>

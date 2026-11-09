@@ -16,6 +16,10 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>shape_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>

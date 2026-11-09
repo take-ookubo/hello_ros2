@@ -11,6 +11,10 @@ from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
+# Ripe fruit models in worlds/harvest_world.sdf that the hand can pick.
+FRUIT_MODELS = ['fruit_left', 'fruit_right']
+
+
 def generate_launch_description():
     arm_share = get_package_share_directory('agri_arm')
     share = get_package_share_directory('agri_arm_moveit_config')
@@ -68,7 +72,24 @@ def generate_launch_description():
             'payload': LaunchConfiguration('payload'),
             'control_mode': LaunchConfiguration('control_mode'),
             'auto_move': 'false',
+            'grasp_objects': ' '.join(FRUIT_MODELS),
         }.items())
+
+    # Hand and plant joints in Gazebo (std_msgs/Empty -> gz.msgs.Empty),
+    # fruit poses for checking where they ended up, and set_pose to hang
+    # the fruit back on the plant before the next cycle.
+    gz_topics = [f'/{m}/{part}/{action}@std_msgs/msg/Empty]gz.msgs.Empty'
+                 for m in FRUIT_MODELS for part in ('hand', 'stem')
+                 for action in ('attach', 'detach')]
+    sim_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=gz_topics + [
+            f'/model/{m}/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose' for m in FRUIT_MODELS
+        ] + ['/world/harvest_world/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+    )
 
     # Always started: it adds the post and floor to the planning scene.
     # With demo:=false it exits after that instead of moving the arm.
@@ -145,6 +166,7 @@ def generate_launch_description():
                               description='Find the fruit with the field camera '
                               '(false: use the fixed positions)'),
         gazebo,
+        sim_bridge,
         camera_bridge,
         camera_tf,
         optical_tf,
