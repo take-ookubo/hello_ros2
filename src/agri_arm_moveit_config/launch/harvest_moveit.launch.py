@@ -108,6 +108,7 @@ def generate_launch_description():
                 'wrist_view_yaws': [0.0, 45.0, -45.0] if side else [0.0],
                 'if_unseen': LaunchConfiguration('if_unseen'),
                 'align_roll': LaunchConfiguration('align_roll'),
+                'align_pitch': LaunchConfiguration('align_pitch'),
                 'trajectory_log': LaunchConfiguration('trajectory_log'),
             }],
             output='screen',
@@ -218,6 +219,9 @@ def generate_launch_description():
         DeclareLaunchArgument('align_roll', default_value='true',
                               description='Turn the hand (joint6) to the lean of the stem the '
                               'wrist camera sees'),
+        DeclareLaunchArgument('align_pitch', default_value='true',
+                              description='Also tilt the hand to the stem lean toward or away '
+                              'from it (approach square to the stem)'),
         DeclareLaunchArgument('leaves', default_value='true',
                               description='Add leaves that hide the stems (worlds/leaves.sdf)'),
         gazebo,

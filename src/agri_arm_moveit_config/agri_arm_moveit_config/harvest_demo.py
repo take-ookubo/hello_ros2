@@ -22,9 +22,13 @@ With use_wrist_camera the hand stops at the pre-approach pose and
 agri_perception's stem_detector looks at the stem with the wrist camera;
 the straight approach is then moved onto the stem it sees, and with
 align_roll the hand is also turned about its approach axis (joint6) so
-that its "up" (tool -x) follows the stem's lean: the finger pads then lie
-along the stem and the blade, 1.5 cm above the fingers, crosses it right
-over the finger center instead of beside it. If a leaf hides
+that its "up" (tool -x) follows the stem's lean across the approach: the
+finger pads then lie along the stem and the blade, 1.5 cm above the
+fingers, crosses it right over the finger center instead of beside it.
+With align_pitch the hand is also tilted about the finger closing
+direction to the lean toward or away from it, so the approach comes in
+square to the stem (from above or below) and the blade meets the stem at
+the finger center's depth, not in front of or behind it. If a leaf hides
 the stem, the hand looks again from the sides (wrist_view_yaws: the view
 turned about the vertical through the stem) and comes back in front of the
 stem it saw. If no view sees it the fruit is skipped and left on the plant
@@ -39,7 +43,8 @@ once it is cut, so the moves to the crate avoid obstacles with it. For
 those moves the node reports the peak acceleration of the fruit and the
 finger force that friction alone would need to hold it. After the grasp
 it also logs the angle between the hand's up axis and the true stem and
-how far sideways from the finger center the blade meets that stem. After
+how far sideways from and how deep past the finger center the blade
+meets that stem. After
 every cycle the fruit are hung back on the plant (set_pose + attach) for the next one.
 
 For every move the node logs the planning time, whether the joint
@@ -90,14 +95,24 @@ POST_CENTER = (0.42, 0.0, 0.45)
 POST_SIZE = (0.04, 0.04, 0.9)
 BRANCH_CENTER = (0.42, 0.0, 0.59)
 BRANCH_SIZE = (0.02, 0.6, 0.02)
-FRUITS = {'fruit_left': (0.42, 0.20, 0.45), 'fruit_right': (0.42, -0.20, 0.45)}
+FRUITS = {'fruit_left': (0.385, 0.20, 0.45), 'fruit_right': (0.42, -0.20, 0.45)}
 UNRIPE = [(0.42, -0.08, 0.45)]
+
+
+def lean(across, away):
+    """Unit stem direction (up) leaning across [deg] to -y in the y-z plane
+    and away [deg] from the arm (+x) in the x-z plane."""
+    d = (math.tan(math.radians(away)), -math.tan(math.radians(across)), 1.0)
+    n = math.sqrt(sum(c * c for c in d))
+    return tuple(c / n for c in d)
+
+
 # True stem lines (point on the fruit top, unit direction up), as in the
-# world file: the left stem leans 30° to -y, the right one 35° to +y. Only
-# used to report how far the fingers close from the real stem.
+# world file: the left stem leans 30° to -y and 20° away from the arm, the
+# right one 35° to +y. Only used to report how far the fingers close from
+# the real stem and how the hand lies on it.
 STEMS = {
-    'fruit_left': ((0.42, 0.20, 0.485), (0.0, -math.sin(math.radians(30)),
-                                         math.cos(math.radians(30)))),
+    'fruit_left': ((0.385, 0.20, 0.485), lean(30, 20)),
     'fruit_right': ((0.42, -0.20, 0.485), (0.0, math.sin(math.radians(35)),
                                            math.cos(math.radians(35)))),
 }
@@ -167,26 +182,52 @@ def quat_axis_angle(axis, angle):
     return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(angle / 2))
 
 
-def roll_to_stem(quat, up):
-    """Turn the tool about its approach axis so that its up (-x) follows up.
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
 
-    Returns (new quaternion, roll [deg], what is left [deg]): only the part
-    of up across the approach axis can be followed; the lean toward or
-    away from the hand is left.
+
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def turn_angle(v, t, axis):
+    """Angle [rad] about the unit axis that takes v to t (both across it)."""
+    return math.atan2(dot(cross(v, t), axis), dot(v, t))
+
+
+def align_to_stem(quat, up, pitch=True):
+    """Turn the tool so that its up (-x) follows the stem direction up.
+
+    First a roll about the approach axis (tool z) to the part of up across
+    it; then, with pitch, a turn about the new tool y (the finger closing
+    direction) to the lean toward or away from the hand, which tilts the
+    approach too: it stays square to the stem. Returns (new quaternion,
+    roll [deg], pitch [deg], lean left [deg]).
     """
     a = quat_apply(quat, (0.0, 0.0, 1.0))
     u0 = quat_apply(quat, (-1.0, 0.0, 0.0))
-    along = sum(x * y for x, y in zip(up, a))
+    along = dot(up, a)
     u = [x - along * y for x, y in zip(up, a)]
     n = math.hypot(*u)
     if n < 1e-6:
-        return quat, 0.0, 90.0
+        return quat, 0.0, 0.0, 90.0
     u = [x / n for x in u]
-    cross = (u0[1] * u[2] - u0[2] * u[1], u0[2] * u[0] - u0[0] * u[2],
-             u0[0] * u[1] - u0[1] * u[0])
-    angle = math.atan2(sum(c * x for c, x in zip(cross, a)), sum(x * y for x, y in zip(u0, u)))
-    left = math.degrees(math.asin(min(1.0, abs(along))))
-    return quat_mul(quat_axis_angle(a, angle), quat), math.degrees(angle), left
+    roll = turn_angle(u0, u, a)
+    q = quat_mul(quat_axis_angle(a, roll), quat)
+    lean_left = math.degrees(math.asin(min(1.0, abs(along))))
+    tilt = 0.0
+    if pitch:
+        y = quat_apply(q, (0.0, 1.0, 0.0))
+        tilt = turn_angle(u, up, y)
+        q = quat_mul(quat_axis_angle(y, tilt), q)
+        lean_left = 0.0
+    return q, math.degrees(roll), math.degrees(tilt), lean_left
+
+
+def in_front(point, quat):
+    """PRE_APPROACH back from point along the tool's approach axis (z)."""
+    a = quat_apply(quat, (0.0, 0.0, 1.0))
+    return tuple(p - PRE_APPROACH * c for p, c in zip(point, a))
 
 
 def quat_apply(q, v):
@@ -234,8 +275,11 @@ class HarvestDemo(Node):
         self.declare_parameter('if_unseen', 'skip')       # skip or guess
         self.declare_parameter('max_correction', 0.04)    # ignore larger [m]
         # Turn the hand about its approach axis to the stem's lean (needs
-        # the wrist camera); at most max_roll [deg].
+        # the wrist camera); at most max_roll [deg]. align_pitch also tilts
+        # it to the lean toward or away from the hand, at most max_pitch.
         self.declare_parameter('align_roll', True)
+        self.declare_parameter('align_pitch', True)
+        self.declare_parameter('max_pitch', 35.0)
         # Append every planned arm trajectory to this file as JSON lines
         # ('' = off), for agri_arm's mujoco_dynamics --trajectories.
         self.declare_parameter('trajectory_log', '')
@@ -773,9 +817,11 @@ class HarvestDemo(Node):
         angle = math.degrees(math.acos(min(1.0, abs(dt[0]))))
         text = f'hand up axis {angle:.1f}° from the stem'
         if abs(dt[0]) > 1e-6:
-            # the blade moves along tool y in the plane x = -CUT_ABOVE
+            # the blade moves along tool y in the plane x = -CUT_ABOVE;
+            # deep is along the approach (tool z), + past the finger center
             s = (-CUT_ABOVE - at[0]) / dt[0]
-            text += f', blade meets it {1000 * (at[1] + s * dt[1]):+.1f} mm sideways'
+            text += (f', blade meets it {1000 * (at[1] + s * dt[1]):+.1f} mm sideways'
+                     f' {1000 * (at[2] + s * dt[2]):+.1f} mm deep')
         return text
 
     def check_held(self, cycle, model, offset):
@@ -856,6 +902,27 @@ class HarvestDemo(Node):
                                + (': in the crate' if inside else ': NOT in the crate'))
         return inside
 
+    def turn_to_stem(self, cycle, model, up):
+        """Approach orientation turned to the seen stem direction up."""
+        p = lambda name: self.get_parameter(name).value  # noqa: E731
+        pitch = p('align_pitch')
+        turned, roll, tilt, left = align_to_stem(APPROACH_QUAT, up, pitch)
+        if abs(roll) > p('max_roll'):
+            self.get_logger().warn(f'[{cycle}] {model}: roll {roll:+.0f}° is more '
+                                   f'than {p("max_roll"):.0f}°, not turned')
+            return APPROACH_QUAT
+        if abs(tilt) > p('max_pitch'):
+            self.get_logger().warn(f'[{cycle}] {model}: pitch {tilt:+.0f}° is more than '
+                                   f'{p("max_pitch"):.0f}°, only rolled')
+            turned, roll, tilt, left = align_to_stem(APPROACH_QUAT, up, False)
+        text = f'[{cycle}] {model}: hand turned {roll:+.1f}° to the stem'
+        if pitch and left == 0.0:
+            text += f' and tilted {tilt:+.1f}°'
+        else:
+            text += f' ({left:.1f}° of lean toward or away from the hand left)'
+        self.get_logger().info(text)
+        return turned
+
     def harvest(self, cycle, model, first, stem, joints, drop_joints, lin):
         """Approach the stem, grasp, cut, carry to the crate and release.
 
@@ -879,20 +946,12 @@ class HarvestDemo(Node):
                 else:
                     seen, up = found
                 if up is not None and self.get_parameter('align_roll').value:
-                    turned, roll, left = roll_to_stem(APPROACH_QUAT, up)
-                    limit = self.get_parameter('max_roll').value
-                    if abs(roll) > limit:
-                        self.get_logger().warn(f'[{cycle}] {model}: roll {roll:+.0f}° is more '
-                                               f'than {limit:.0f}°, not turned')
-                    else:
-                        quat = turned
-                        self.get_logger().info(f'[{cycle}] {model}: hand turned {roll:+.1f}° '
-                                               f'to the stem ({left:.1f}° of lean toward or '
-                                               'away from the hand left)')
-                # In front of the seen stem, then straight in along +x as
-                # before: sideways by LIN from the pre-approach pose (turning
-                # the hand on the way), or back from a side view by OMPL.
-                aligned = (seen[0] - PRE_APPROACH, seen[1], seen[2])
+                    quat = self.turn_to_stem(cycle, model, up)
+                # In front of the seen stem, then straight in along the
+                # tool's approach axis (+x unless pitched): by LIN from the
+                # pre-approach pose (turning the hand on the way), or back
+                # from a side view by OMPL.
+                aligned = in_front(seen, quat)
                 if moved:
                     back_joints = self.solve_ik(aligned, quat)
                     if back_joints is None or not self.step(
@@ -924,7 +983,7 @@ class HarvestDemo(Node):
         offset = self.fruit_offset(model)
         self.attach_fruit(model, offset)
         self.get_logger().info(f'[{cycle}] {model}: stem grasped and cut')
-        back = (stem[0] - PRE_APPROACH, stem[1], stem[2])
+        back = in_front(stem, quat)
         if lin:
             ok = self.step(cycle, f'{model} LIN retreat', target_xyz=back,
                            line=(stem, back), carrying=offset, quat=quat)

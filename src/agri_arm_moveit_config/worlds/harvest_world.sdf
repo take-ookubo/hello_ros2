@@ -42,7 +42,10 @@
          The stems are thin and flexible and are left out of the planning
          scene. Each ripe fruit hangs from it by a detachable joint. The
          ripe fruit stems lean sideways (left 30° to -y, right 35° to +y),
-         so their grasp point is not straight above the fruit; harvest_demo
+         so their grasp point is not straight above the fruit. The left one
+         also leans 20° away from the arm (+x going up; the fruit hangs
+         3.5 cm in front of the branch), so its lean is not all across the
+         approach. Angles are in the y-z and x-z planes; harvest_demo
          repeats these lines in STEMS. -->
     <model name="plant">
       <static>true</static>
@@ -67,8 +70,8 @@
           <material><ambient>0.45 0.3 0.15 1</ambient><diffuse>0.45 0.3 0.15 1</diffuse></material>
         </visual>
         <visual name="fruit_left_stem">
-          <pose>0 0.16247 0.55 0.523599 0 0</pose>
-          <geometry><cylinder><radius>0.003</radius><length>0.06928</length></cylinder></geometry>
+          <pose>-0.01134 0.16247 0.55 0.497091 0.349066 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.07264</length></cylinder></geometry>
           <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
         </visual>
         <visual name="fruit_right_stem">
@@ -108,7 +111,7 @@
          on the arm (agri_arm.urdf.xacro, grasp_objects), holds it in the
          hand after the cut. -->
     <model name="fruit_left">
-      <pose>0.42 0.2 0.45 0 0 0</pose>
+      <pose>0.385 0.2 0.45 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.15</mass>
@@ -122,8 +125,8 @@
           <material><ambient>0.85 0.1 0.1 1</ambient><diffuse>0.85 0.1 0.1 1</diffuse></material>
         </visual>
         <visual name="stem">
-          <pose>0 -0.01010 0.0525 0.523599 0 0</pose>
-          <geometry><cylinder><radius>0.003</radius><length>0.04041</length></cylinder></geometry>
+          <pose>0.00637 -0.01010 0.0525 0.497091 0.349066 0</pose>
+          <geometry><cylinder><radius>0.003</radius><length>0.04237</length></cylinder></geometry>
           <material><ambient>0.35 0.45 0.3 1</ambient><diffuse>0.35 0.45 0.3 1</diffuse></material>
         </visual>
       </link>

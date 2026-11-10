@@ -17,7 +17,7 @@
     <static>true</static>
     <link name="link">
       <visual name="leaf_left">
-        <pose>0.40 0.18 0.521 0 0 0</pose>
+        <pose>0.378 0.18 0.521 0 0 0</pose>
         <geometry><box><size>0.002 0.06 0.018</size></box></geometry>
         <material><ambient>0.1 0.45 0.2 1</ambient><diffuse>0.1 0.45 0.2 1</diffuse></material>
       </visual>
