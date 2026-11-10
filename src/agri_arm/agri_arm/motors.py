@@ -8,10 +8,12 @@ through the published points:
   speed); above that line the module cannot reach the speed. The torque
   is capped at the peak torque, and the RMS torque over a move is
   compared with the rated torque (heating).
-- DYNAMIXEL (12 V): the DC motor line from the no-load speed to the stall
-  torque. ROBOTIS gives no continuous rating, so the RMS torque is
-  compared with the provisional value MODULE_TORQUE of pose_cycle, as
-  before.
+- DYNAMIXEL (12 V, the recommended supply): the DC motor line from the
+  no-load speed to the stall torque. ROBOTIS gives no continuous rating,
+  so the RMS torque is compared with the provisional value MODULE_TORQUE
+  of pose_cycle, as before. modules(14.8) gives the DYNAMIXEL points at
+  14.8 V instead: the top of their input range (10.0-14.8 V), so a
+  regulated supply, not a 4S battery (16.8 V when full).
 
 Current is torque / torque constant (the module's own constant; for
 DYNAMIXEL stall torque / stall current), plus the standby current. The
@@ -24,7 +26,8 @@ peak torque (current) is the limit. Gearbox losses and temperature are
 not modelled, and the lines are approximations of the published curves.
 
 Sources (2026-11-10): myactuator.us product pages of RMD-X8-P20-120 and
-RMD-X6-P20-60; emanual.robotis.com pages of XM540-W270 and XM430-W350.
+RMD-X6-P20-60; emanual.robotis.com pages of XM540-W270 and XM430-W350 (12 V and 14.8 V
+columns).
 """
 import math
 from dataclasses import dataclass
@@ -75,8 +78,29 @@ XM540 = Module('XM540-W270 (12 V)', 12.0, 30 * RPM, 10.6, 0.0, 10.6, 6.0, 10.6 /
 XM430 = Module('XM430-W350 (12 V)', 12.0, 46 * RPM, 4.1, 0.0, 4.1, 2.5, 4.1 / 2.3, 2.3,
                standby_current=0.04, continuous_is_rated=False)
 
-MODULES = {'joint1': X6, 'joint2': X8, 'joint3': X6,
-           'joint4': XM540, 'joint5': XM540, 'joint6': XM430}
+# The same at 14.8 V: XM540 12.9 N·m, 5.5 A, 37 rpm; XM430 4.8 N·m, 2.7 A, 57 rpm.
+# The provisional continuous torques are kept (heating is not voltage-bound).
+XM540_14V8 = Module('XM540-W270 (14.8 V)', 14.8, 37 * RPM, 12.9, 0.0, 12.9, 6.0, 12.9 / 5.5,
+                    5.5, standby_current=0.04, continuous_is_rated=False)
+XM430_14V8 = Module('XM430-W350 (14.8 V)', 14.8, 57 * RPM, 4.8, 0.0, 4.8, 2.5, 4.8 / 2.7, 2.7,
+                    standby_current=0.04, continuous_is_rated=False)
+
+DXL_VOLTAGES = (12.0, 14.8)
+
+
+def modules(dxl_voltage=12.0):
+    """Joint -> Module, with the DYNAMIXEL wrist at dxl_voltage (12 or 14.8 V)."""
+    if dxl_voltage == 12.0:
+        xm540, xm430 = XM540, XM430
+    elif dxl_voltage == 14.8:
+        xm540, xm430 = XM540_14V8, XM430_14V8
+    else:
+        raise ValueError(f'DYNAMIXEL voltage must be one of {DXL_VOLTAGES}')
+    return {'joint1': X6, 'joint2': X8, 'joint3': X6,
+            'joint4': xm540, 'joint5': xm540, 'joint6': xm430}
+
+
+MODULES = modules(12.0)
 
 
 def check(module, speeds, torques, dt):

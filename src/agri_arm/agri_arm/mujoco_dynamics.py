@@ -24,6 +24,7 @@ fruit's mass (--fruit-mass) at the tool on top of --payload.
 Run it inside the container (no Gazebo or ROS graph needed):
   ros2 run agri_arm mujoco_dynamics [--payload 0.35] [--speeds 0.5 1.0]
   ros2 run agri_arm mujoco_dynamics --trajectories /tmp/harvest_traj.jsonl
+  ros2 run agri_arm mujoco_dynamics --dxl-voltage 14.8 --max-vel joint4=3.0 joint5=3.0
 """
 import argparse
 import json
@@ -36,8 +37,9 @@ import xacro
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
-from agri_arm.dynamics_test import MOVES, duration_for, quintic
-from agri_arm.motors import MODULES, check, describe, over, supply_power
+from agri_arm import motors
+from agri_arm.dynamics_test import MAX_VEL, MOVES, duration_for, quintic
+from agri_arm.motors import DXL_VOLTAGES, check, describe, over, supply_power
 from agri_arm.pose_cycle import JOINTS, MODULE_TORQUE
 
 # Reflected rotor inertia at the joint [kg·m²].
@@ -58,9 +60,15 @@ ARMATURE = {
     'joint5': 0.0266 * (272.5 / 225) ** 2,     # XM540-W270
     'joint6': 0.0120 * (353.5 / 200) ** 2,     # XM430-W350, about 0.037
 }
-# Short-time peak torque [N·m]: RMD peak torque, DYNAMIXEL stall torque at 12 V.
-PEAK_TORQUE = {'joint1': 50.0, 'joint2': 120.0, 'joint3': 50.0,
-               'joint4': 10.6, 'joint5': 10.6, 'joint6': 4.1}
+
+# The test moves of dynamics_test, plus the wrist flip back: one way gravity
+# drives the wrist (braking), the other way the motor lifts the tool
+# against it (motoring), which is what the speed-torque line limits.
+CHECK_MOVES = MOVES + [('wrist_flip_back', MOVES[3][2], MOVES[3][1])]
+
+# Joint -> motors.Module; main() swaps in the 14.8 V wrist with --dxl-voltage.
+# Its peak_torque (RMD peak, DYNAMIXEL stall) is the short-time peak below.
+MODULES = motors.modules()
 
 DT = 0.001      # physics and control step [s], as in Gazebo
 TAIL = 0.5      # keep simulating after the trajectory ends [s]
@@ -300,7 +308,25 @@ def main():
     parser.add_argument('--trajectories', help='JSON lines from harvest_demo trajectory_log')
     parser.add_argument('--fruit-mass', type=float, default=0.15,
                         help='[kg] added while a recorded move carries a fruit')
+    parser.add_argument('--dxl-voltage', type=float, default=12.0, choices=DXL_VOLTAGES,
+                        help='DYNAMIXEL wrist supply [V] for the speed-torque check')
+    parser.add_argument('--max-vel', nargs='+', default=[], metavar='JOINT=RAD_S',
+                        help='velocity limits for the test moves instead of the URDF ones, '
+                        'e.g. joint4=3.0 (not for --trajectories, which are already planned)')
     args = parser.parse_args()
+    global MODULES
+    MODULES = motors.modules(args.dxl_voltage)
+    for item in args.max_vel:
+        name, _, value = item.partition('=')
+        try:
+            value = float(value)
+        except ValueError:
+            parser.error(f'--max-vel {item!r}: use JOINT=RAD_S')
+        if name not in MAX_VEL or not (math.isfinite(value) and value > 0.0):
+            parser.error(f'--max-vel {item!r}: unknown joint or not a positive speed')
+        MAX_VEL[name] = value
+    if args.max_vel and args.trajectories:
+        parser.error('--max-vel only changes the test moves, not --trajectories')
     if not (math.isfinite(args.payload) and args.payload >= 0.0):
         parser.error('--payload must be a finite value >= 0')
     if not all(math.isfinite(x) and 0.0 < x <= 2.0 for x in args.speeds):
@@ -321,12 +347,14 @@ def main():
     base = load_gains()
     controllers = {'gazebo gains': base, 'stiff gains': stiff_gains(base)}
 
+    print(f'DYNAMIXEL at {args.dxl_voltage} V, velocity limits [rad/s]: '
+          + ' '.join(f'{j[-1]}:{MAX_VEL[j]:.2f}' for j in JOINTS))
     print(f'payload {args.payload} kg, armature [kg·m²]: '
           + ' '.join(f'{j[-1]}:{ARMATURE[j]:.3f}' for j in JOINTS))
     print('torque is peak N·m (% of MODULE_TORQUE: RMD rated, DYNAMIXEL provisional '
           'continuous value); RMS over the move in [] (same base); '
           '"peak" shows % of the short-time peak torque.')
-    for name, start, goal in MOVES:
+    for name, start, goal in CHECK_MOVES:
         for scale in args.speeds:
             T, q, qd, qdd = trajectory(start, goal, scale)
             print(f'\n== {name}, speed {scale:.2f} (T {T:.2f} s, '
@@ -341,7 +369,7 @@ def main():
                       + ' '.join(
                           f'{i + 1}:{pct(peak[i], j, MODULE_TORQUE)}'
                           f'[{100 * rms[i] / MODULE_TORQUE[j]:.0f}%]'
-                          f'/peak{100 * peak[i] / PEAK_TORQUE[j]:.0f}%'
+                          f'/peak{100 * peak[i] / MODULES[j].peak_torque:.0f}%'
                           for i, j in enumerate(JOINTS)))
                 if arm:
                     lines, _ = motor_report(tau, qd, DT)

@@ -53,3 +53,16 @@ def test_braking_is_not_on_the_speed_line():
     r = check(XM540, [2.0, 2.0], [-5.0, -5.0], 0.01)
     assert r['line_use'] == 0.0
     assert r['peak_use'] == pytest.approx(5.0 / XM540.torque_cap)
+
+
+def test_dynamixel_at_14v8():
+    from agri_arm.motors import modules
+    m = modules(14.8)
+    assert m['joint4'].no_load_speed == pytest.approx(37 * RPM)
+    assert m['joint6'].available_torque(0.0) == pytest.approx(4.8)
+    # 2.5 rad/s at 14.8 V leaves more torque than 2.0 rad/s at 12 V (3.85 N·m).
+    assert m['joint4'].available_torque(2.5) == pytest.approx(4.58, abs=0.01)
+    assert m['joint1'] is MODULES['joint1']        # the RMD joints do not change
+    assert modules(12.0) == MODULES
+    with pytest.raises(ValueError):
+        modules(24.0)
